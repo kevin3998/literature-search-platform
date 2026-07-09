@@ -14,6 +14,18 @@ def csv_env(name: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise DatabaseConfigError(f"{name} must be a boolean value")
+
+
 def cors_allow_origins() -> list[str]:
     configured = csv_env("CORS_ALLOW_ORIGINS")
     if configured:
@@ -32,6 +44,44 @@ def worker_required() -> bool:
     if raw is None:
         return app_env() == "production"
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def enable_signup() -> bool:
+    return bool_env("ENABLE_SIGNUP", True)
+
+
+def session_ttl_days() -> int:
+    raw = os.getenv("SESSION_TTL_DAYS") or "30"
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise DatabaseConfigError("SESSION_TTL_DAYS must be a positive integer") from exc
+    if value <= 0:
+        raise DatabaseConfigError("SESSION_TTL_DAYS must be a positive integer")
+    return value
+
+
+def password_min_length() -> int:
+    raw = os.getenv("PASSWORD_MIN_LENGTH") or "8"
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise DatabaseConfigError("PASSWORD_MIN_LENGTH must be an integer at least 8") from exc
+    if value < 8:
+        raise DatabaseConfigError("PASSWORD_MIN_LENGTH must be at least 8")
+    return value
+
+
+def session_cookie_name() -> str:
+    return os.getenv("SESSION_COOKIE_NAME") or "lap_session"
+
+
+def csrf_cookie_name() -> str:
+    return os.getenv("CSRF_COOKIE_NAME") or "lap_csrf"
+
+
+def cookie_secure() -> bool:
+    return bool_env("COOKIE_SECURE", app_env() == "production")
 
 
 def secret_key_path() -> Path:
