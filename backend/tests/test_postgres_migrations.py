@@ -390,6 +390,18 @@ def test_formal_user_management_schema_is_owned_by_0004_only():
     assert all(token in formal_auth_schema for token in auth_tokens)
 
 
+def test_formal_user_management_revision_supports_offline_sql_generation(capsys):
+    cfg = alembic_config("postgresql+psycopg://user:password@localhost/literature_agent", "public")
+
+    command.upgrade(cfg, "0003_worker_runtime_alignment:0004_formal_user_management", sql=True)
+    command.downgrade(cfg, "0004_formal_user_management:0003_worker_runtime_alignment", sql=True)
+
+    sql = capsys.readouterr().out
+    assert "CREATE TABLE user_credentials" in sql
+    assert "CREATE TABLE auth_sessions" in sql
+    assert "DROP TABLE user_credentials" in sql
+
+
 def test_formal_user_management_migrates_legacy_0003_user_to_head():
     from core.db.engine import engine_for_url
 
