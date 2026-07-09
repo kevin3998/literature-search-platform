@@ -29,13 +29,15 @@ def test_account_signup_csrf_profile_sessions_and_api_tokens(monkeypatch):
             json={"email": "account@example.com", "display_name": "Account User", "password": "password123"},
         )
         csrf = client.get("/api/auth/csrf")
+        csrf_headers = {"X-CSRF-Token": csrf.json()["csrf_token"]}
         profile_before = client.get("/api/account/profile")
         profile_update = client.patch(
             "/api/account/profile",
             json={"display_name": "Updated User", "avatar_url": "https://example.com/avatar.png"},
+            headers=csrf_headers,
         )
         sessions = client.get("/api/account/sessions")
-        token_create = client.post("/api/account/api-tokens", json={"name": "CLI"})
+        token_create = client.post("/api/account/api-tokens", json={"name": "CLI"}, headers=csrf_headers)
         token_list = client.get("/api/account/api-tokens")
 
     assert signup.status_code == 200
@@ -83,18 +85,21 @@ def test_account_password_change_and_revocations(monkeypatch):
             "/api/auth/signup",
             json={"email": "change@example.com", "display_name": "Change User", "password": "password123"},
         )
-        token_create = client.post("/api/account/api-tokens", json={"name": "Old token"})
+        csrf_headers = {"X-CSRF-Token": client.get("/api/auth/csrf").json()["csrf_token"]}
+        token_create = client.post("/api/account/api-tokens", json={"name": "Old token"}, headers=csrf_headers)
         token_id = token_create.json()["token_id"]
-        revoke_token = client.delete(f"/api/account/api-tokens/{token_id}")
+        revoke_token = client.delete(f"/api/account/api-tokens/{token_id}", headers=csrf_headers)
         password_change = client.post(
             "/api/account/password",
             json={"current_password": "password123", "new_password": "newpassword123"},
+            headers=csrf_headers,
         )
-        client.post("/api/auth/logout")
+        client.post("/api/auth/logout", headers=csrf_headers)
         old_login = client.post("/api/auth/login", json={"email": "change@example.com", "password": "password123"})
         new_login = client.post("/api/auth/login", json={"email": "change@example.com", "password": "newpassword123"})
+        csrf_headers = {"X-CSRF-Token": client.get("/api/auth/csrf").json()["csrf_token"]}
         session_id = client.get("/api/account/sessions").json()[0]["session_id"]
-        revoke_session = client.delete(f"/api/account/sessions/{session_id}")
+        revoke_session = client.delete(f"/api/account/sessions/{session_id}", headers=csrf_headers)
         after_revoke = client.get("/api/account/profile")
 
     assert revoke_token.status_code == 200
@@ -134,6 +139,9 @@ def test_account_revoke_path_value_errors_return_400(monkeypatch):
     from core.user_context import UserContext, current_user
 
     class FakeAuthStore:
+        def validate_csrf(self, session_token: str, csrf_token: str):
+            return session_token == "session" and csrf_token == "csrf"
+
         def revoke_session(self, user_id: str, session_id: str):
             raise ValueError("bad session id")
 
@@ -145,9 +153,11 @@ def test_account_revoke_path_value_errors_return_400(monkeypatch):
     app.include_router(account_router)
     monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
     client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set("lap_session", "session")
+    csrf_headers = {"X-CSRF-Token": "csrf"}
 
-    session_response = client.delete("/api/account/sessions/not-a-uuid")
-    token_response = client.delete("/api/account/api-tokens/not-a-uuid")
+    session_response = client.delete("/api/account/sessions/not-a-uuid", headers=csrf_headers)
+    token_response = client.delete("/api/account/api-tokens/not-a-uuid", headers=csrf_headers)
 
     assert session_response.status_code == 400
     assert session_response.json()["detail"] == "bad session id"

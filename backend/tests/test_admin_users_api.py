@@ -33,11 +33,16 @@ def test_admin_can_list_update_disable_and_enable_users(monkeypatch):
             json={"email": "bob@example.com", "display_name": "Bob", "password": "password123"},
         )
         bob_id = user_signup.json()["user_id"]
+        admin_csrf_headers = {"X-CSRF-Token": admin_client.get("/api/auth/csrf").json()["csrf_token"]}
 
         users_before = admin_client.get("/api/admin/users")
-        disable = admin_client.patch(f"/api/admin/users/{bob_id}", json={"status": "disabled", "display_name": "Disabled Bob"})
+        disable = admin_client.patch(
+            f"/api/admin/users/{bob_id}",
+            json={"status": "disabled", "display_name": "Disabled Bob"},
+            headers=admin_csrf_headers,
+        )
         disabled_login = user_client.post("/api/auth/login", json={"email": "bob@example.com", "password": "password123"})
-        enable = admin_client.patch(f"/api/admin/users/{bob_id}", json={"status": "active", "role": "admin"})
+        enable = admin_client.patch(f"/api/admin/users/{bob_id}", json={"status": "active", "role": "admin"}, headers=admin_csrf_headers)
         enabled_login = user_client.post("/api/auth/login", json={"email": "bob@example.com", "password": "password123"})
 
     assert admin_signup.status_code == 200
@@ -78,8 +83,9 @@ def test_admin_rejects_last_admin_demotion_and_disable(monkeypatch):
             json={"email": "solo@example.com", "display_name": "Solo Admin", "password": "password123"},
         )
         user_id = signup.json()["user_id"]
-        demote = client.patch(f"/api/admin/users/{user_id}", json={"role": "user"})
-        disable = client.patch(f"/api/admin/users/{user_id}", json={"status": "disabled"})
+        csrf_headers = {"X-CSRF-Token": client.get("/api/auth/csrf").json()["csrf_token"]}
+        demote = client.patch(f"/api/admin/users/{user_id}", json={"role": "user"}, headers=csrf_headers)
+        disable = client.patch(f"/api/admin/users/{user_id}", json={"status": "disabled"}, headers=csrf_headers)
 
     assert signup.status_code == 200
     assert demote.status_code == 400
@@ -117,11 +123,17 @@ def test_admin_reset_password_revoke_targets_and_audit(monkeypatch):
             json={"email": "target@example.com", "display_name": "Target", "password": "password123"},
         )
         target_id = user_signup.json()["user_id"]
-        user_client.post("/api/account/api-tokens", json={"name": "Target token"})
+        admin_csrf_headers = {"X-CSRF-Token": admin_client.get("/api/auth/csrf").json()["csrf_token"]}
+        user_csrf_headers = {"X-CSRF-Token": user_client.get("/api/auth/csrf").json()["csrf_token"]}
+        user_client.post("/api/account/api-tokens", json={"name": "Target token"}, headers=user_csrf_headers)
 
-        reset = admin_client.post(f"/api/admin/users/{target_id}/reset-password", json={"new_password": "resetpassword123"})
-        revoke_tokens = admin_client.post(f"/api/admin/users/{target_id}/revoke-api-tokens")
-        revoke_sessions = admin_client.post(f"/api/admin/users/{target_id}/revoke-sessions")
+        reset = admin_client.post(
+            f"/api/admin/users/{target_id}/reset-password",
+            json={"new_password": "resetpassword123"},
+            headers=admin_csrf_headers,
+        )
+        revoke_tokens = admin_client.post(f"/api/admin/users/{target_id}/revoke-api-tokens", headers=admin_csrf_headers)
+        revoke_sessions = admin_client.post(f"/api/admin/users/{target_id}/revoke-sessions", headers=admin_csrf_headers)
         old_login = user_client.post("/api/auth/login", json={"email": "target@example.com", "password": "password123"})
         new_login = user_client.post("/api/auth/login", json={"email": "target@example.com", "password": "resetpassword123"})
         audit = admin_client.get("/api/admin/audit-events")
@@ -171,6 +183,9 @@ def test_admin_path_value_errors_return_400(monkeypatch):
     from core.user_context import UserContext, current_user
 
     class FakeAuthStore:
+        def validate_csrf(self, session_token: str, csrf_token: str):
+            return session_token == "session" and csrf_token == "csrf"
+
         def update_user_admin(self, actor_user_id: str, target_user_id: str, **kwargs):
             raise ValueError("bad user id")
 
@@ -188,11 +203,13 @@ def test_admin_path_value_errors_return_400(monkeypatch):
     app.include_router(admin_router)
     monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
     client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set("lap_session", "session")
+    csrf_headers = {"X-CSRF-Token": "csrf"}
 
-    update_response = client.patch("/api/admin/users/not-a-uuid", json={"status": "disabled"})
-    reset_response = client.post("/api/admin/users/not-a-uuid/reset-password", json={"new_password": "password123"})
-    sessions_response = client.post("/api/admin/users/not-a-uuid/revoke-sessions")
-    tokens_response = client.post("/api/admin/users/not-a-uuid/revoke-api-tokens")
+    update_response = client.patch("/api/admin/users/not-a-uuid", json={"status": "disabled"}, headers=csrf_headers)
+    reset_response = client.post("/api/admin/users/not-a-uuid/reset-password", json={"new_password": "password123"}, headers=csrf_headers)
+    sessions_response = client.post("/api/admin/users/not-a-uuid/revoke-sessions", headers=csrf_headers)
+    tokens_response = client.post("/api/admin/users/not-a-uuid/revoke-api-tokens", headers=csrf_headers)
 
     assert update_response.status_code == 400
     assert update_response.json()["detail"] == "bad user id"

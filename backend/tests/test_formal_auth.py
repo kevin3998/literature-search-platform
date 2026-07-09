@@ -163,6 +163,47 @@ def test_signup_rejects_duplicate_email():
             store.signup(email=" DUPLICATE@example.com ", display_name="Duplicate", password="password123")
 
 
+def test_cookie_state_change_requires_csrf(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.account_router import router as account_router
+    from api.auth_router import router as auth_router
+    from core.auth_store import AuthStore
+
+    with migrated_postgres_schema():
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("COOKIE_NAME", "lap_csrf_session")
+        monkeypatch.setenv("CSRF_COOKIE_NAME", "lap_csrf_token")
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        app.include_router(account_router)
+        client = TestClient(app)
+
+        signup_response = client.post(
+            "/api/auth/signup",
+            json={"email": "csrf@example.com", "display_name": "CSRF User", "password": "password123"},
+        )
+        missing_csrf_profile = client.patch("/api/account/profile", json={"display_name": "No Token"})
+        csrf_response = client.get("/api/auth/csrf")
+        csrf_headers = {"X-CSRF-Token": csrf_response.json()["csrf_token"]}
+        profile_response = client.patch("/api/account/profile", json={"display_name": "With Token"}, headers=csrf_headers)
+        missing_csrf_logout = client.post("/api/auth/logout")
+        logout_response = client.post("/api/auth/logout", headers=csrf_headers)
+
+    assert signup_response.status_code == 200
+    assert missing_csrf_profile.status_code == 403
+    assert missing_csrf_profile.json()["detail"] == "csrf failed"
+    assert csrf_response.status_code == 200
+    assert profile_response.status_code == 200
+    assert profile_response.json()["display_name"] == "With Token"
+    assert missing_csrf_logout.status_code == 403
+    assert missing_csrf_logout.json()["detail"] == "csrf failed"
+    assert logout_response.status_code == 200
+    assert logout_response.json() == {"ok": True}
+
+
 def test_auth_api_signup_me_and_logout(monkeypatch):
     import core.auth_store as auth_store_module
     from api.auth_router import router as auth_router
@@ -187,7 +228,8 @@ def test_auth_api_signup_me_and_logout(monkeypatch):
             json={"email": "ApiUser@example.com", "display_name": "API User", "password": "password123"},
         )
         me_response = client.get("/api/auth/me")
-        logout_response = client.post("/api/auth/logout")
+        csrf_response = client.get("/api/auth/csrf")
+        logout_response = client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf_response.json()["csrf_token"]})
         after_logout_response = client.get("/api/auth/me")
 
     assert signup_response.status_code == 200
@@ -198,6 +240,7 @@ def test_auth_api_signup_me_and_logout(monkeypatch):
     assert csrf_name in signup_response.cookies
     assert me_response.status_code == 200
     assert me_response.json()["email"] == "apiuser@example.com"
+    assert csrf_response.status_code == 200
     assert logout_response.status_code == 200
     assert logout_response.json() == {"ok": True}
     assert after_logout_response.status_code == 401

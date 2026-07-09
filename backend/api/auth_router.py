@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import core.auth_store as auth_store_module
+from core.csrf import require_csrf
 from core.runtime_config import cookie_secure, csrf_cookie_name, session_cookie_name, session_ttl_days
 from core.user_context import UserContext, current_user
 
@@ -54,7 +55,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
     return login_result["user"]
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=[Depends(require_csrf)])
 def logout(request: Request, response: Response):
     token = request.cookies.get(session_cookie_name())
     if token:

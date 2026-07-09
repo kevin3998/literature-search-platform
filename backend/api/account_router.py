@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import core.auth_store as auth_store_module
+from core.csrf import require_csrf
 from core.user_context import UserContext, current_user
 
 router = APIRouter(prefix="/api/account", tags=["account"])
@@ -31,7 +32,7 @@ def profile(user: UserContext = Depends(current_user)):
     return profile_row
 
 
-@router.patch("/profile")
+@router.patch("/profile", dependencies=[Depends(require_csrf)])
 def update_profile(payload: ProfilePatchRequest, user: UserContext = Depends(current_user)):
     try:
         return auth_store_module.auth_store.update_profile(user.user_id, display_name=payload.display_name, avatar_url=payload.avatar_url)
@@ -39,7 +40,7 @@ def update_profile(payload: ProfilePatchRequest, user: UserContext = Depends(cur
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/password")
+@router.post("/password", dependencies=[Depends(require_csrf)])
 def change_password(payload: PasswordChangeRequest, user: UserContext = Depends(current_user)):
     try:
         auth_store_module.auth_store.change_password(user.user_id, payload.current_password, payload.new_password)
@@ -53,7 +54,7 @@ def list_sessions(user: UserContext = Depends(current_user)):
     return auth_store_module.auth_store.list_sessions(user.user_id)
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", dependencies=[Depends(require_csrf)])
 def revoke_session(session_id: str, user: UserContext = Depends(current_user)):
     try:
         return {"ok": auth_store_module.auth_store.revoke_session(user.user_id, session_id)}
@@ -66,7 +67,7 @@ def list_api_tokens(user: UserContext = Depends(current_user)):
     return {"tokens": auth_store_module.auth_store.list_api_tokens(user.user_id)}
 
 
-@router.post("/api-tokens")
+@router.post("/api-tokens", dependencies=[Depends(require_csrf)])
 def create_api_token(payload: ApiTokenCreateRequest, user: UserContext = Depends(current_user)):
     try:
         return auth_store_module.auth_store.create_api_token(user.user_id, payload.name)
@@ -74,7 +75,7 @@ def create_api_token(payload: ApiTokenCreateRequest, user: UserContext = Depends
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.delete("/api-tokens/{token_id}")
+@router.delete("/api-tokens/{token_id}", dependencies=[Depends(require_csrf)])
 def revoke_api_token(token_id: str, user: UserContext = Depends(current_user)):
     try:
         return {"ok": auth_store_module.auth_store.revoke_api_token(user.user_id, token_id)}
