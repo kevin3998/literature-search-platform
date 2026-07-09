@@ -1,5 +1,6 @@
 const BASE = "/api";
 let apiUserId = null;
+let csrfToken = null;
 
 export function setApiUserId(userId) {
   apiUserId = userId ? String(userId) : null;
@@ -59,6 +60,7 @@ export async function fetchLibrary() {
 async function apiRequest(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: apiHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -69,12 +71,86 @@ async function multipartRequest(path, formData, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     method: options.method || "POST",
+    credentials: "include",
     body: formData,
     headers: apiUploadHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
   return res.json();
 }
+
+function isMutation(method) {
+  return method && method.toUpperCase() !== "GET";
+}
+
+function needsCsrf(path, method) {
+  if (!isMutation(method)) return false;
+  return path !== "/auth/login" && path !== "/auth/signup";
+}
+
+async function csrfHeader() {
+  if (!csrfToken) {
+    const res = await fetch(`${BASE}/auth/csrf`, { credentials: "include" });
+    if (res.ok) {
+      const body = await res.json();
+      csrfToken = body.csrf_token || null;
+    }
+  }
+  return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+}
+
+async function authedRequest(path, options = {}) {
+  const method = options.method || "GET";
+  const headers = apiHeaders({
+    ...(needsCsrf(path, method) ? await csrfHeader() : {}),
+    ...(options.headers || {}),
+  });
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    credentials: "include",
+    headers,
+  });
+  if (!res.ok) throw new Error(await responseErrorMessage(res));
+  return res.json();
+}
+
+function queryString(params = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+export const authApi = {
+  me: () => authedRequest("/auth/me"),
+  signup: (payload) => authedRequest("/auth/signup", { method: "POST", body: JSON.stringify(payload) }),
+  login: (payload) => authedRequest("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
+  logout: () => authedRequest("/auth/logout", { method: "POST" }).finally(() => {
+    csrfToken = null;
+  }),
+};
+
+export const accountApi = {
+  profile: () => authedRequest("/account/profile"),
+  updateProfile: (payload) => authedRequest("/account/profile", { method: "PATCH", body: JSON.stringify(payload) }),
+  changePassword: (payload) => authedRequest("/account/password", { method: "POST", body: JSON.stringify(payload) }),
+  sessions: () => authedRequest("/account/sessions"),
+  revokeSession: (id) => authedRequest(`/account/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  apiTokens: () => authedRequest("/account/api-tokens"),
+  createApiToken: (payload) => authedRequest("/account/api-tokens", { method: "POST", body: JSON.stringify(payload) }),
+  revokeApiToken: (id) => authedRequest(`/account/api-tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
+export const adminApi = {
+  users: (params = {}) => authedRequest(`/admin/users${queryString(params)}`),
+  updateUser: (id, payload) => authedRequest(`/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  resetPassword: (id, payload) => authedRequest(`/admin/users/${encodeURIComponent(id)}/reset-password`, { method: "POST", body: JSON.stringify(payload) }),
+  revokeSessions: (id) => authedRequest(`/admin/users/${encodeURIComponent(id)}/revoke-sessions`, { method: "POST" }),
+  revokeApiTokens: (id) => authedRequest(`/admin/users/${encodeURIComponent(id)}/revoke-api-tokens`, { method: "POST" }),
+  auditEvents: (params = {}) => authedRequest(`/admin/audit-events${queryString(params)}`),
+};
 
 async function responseErrorMessage(res, fallback = `请求失败 (${res.status})`) {
   try {
@@ -805,6 +881,7 @@ export const modelProfilesApi = {
 export async function streamChat({ moduleId, sessionId, message, history, options }, onEvent) {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: "POST",
+    credentials: "include",
     headers: apiHeaders(),
     body: JSON.stringify({
       module_id: moduleId,
@@ -852,6 +929,7 @@ const LS_BASE = "/api/literature-search";
 async function jsonRequest(path, options = {}) {
   const res = await fetch(`${LS_BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: apiHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -895,6 +973,7 @@ const WORKFLOW_BASE = "/api/workflows";
 async function workflowRequest(path, options = {}) {
   const res = await fetch(`${WORKFLOW_BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: apiHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -919,6 +998,7 @@ const STRUCTURED_EXTRACTION_BASE = "/api/structured-extraction";
 async function structuredExtractionRequest(path, options = {}) {
   const res = await fetch(`${STRUCTURED_EXTRACTION_BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: apiHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -1161,6 +1241,7 @@ export const structuredExtractionApi = {
     structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/exports/${encodeURIComponent(exportId)}`).then(normalizeExtractionExport),
   downloadExport: async (taskId, exportId, format) => {
     const res = await fetch(`${STRUCTURED_EXTRACTION_BASE}/tasks/${encodeURIComponent(taskId)}/exports/${encodeURIComponent(exportId)}/download?format=${encodeURIComponent(format)}`, {
+      credentials: "include",
       headers: apiHeaders(),
     });
     if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -1171,6 +1252,7 @@ export const structuredExtractionApi = {
 export async function streamWorkflow(workflowId, onEvent, { after = 0 } = {}) {
   const suffix = after > 0 ? `?after=${encodeURIComponent(after)}` : "";
   const res = await fetch(`${WORKFLOW_BASE}/${encodeURIComponent(workflowId)}/stream${suffix}`, {
+    credentials: "include",
     headers: apiHeaders(),
   });
   if (!res.ok || !res.body) {
@@ -1204,6 +1286,7 @@ const CORPUS_BASE = "/api/corpus";
 async function corpusRequest(path, options = {}) {
   const res = await fetch(`${CORPUS_BASE}${path}`, {
     ...options,
+    credentials: "include",
     headers: apiHeaders(options.headers),
   });
   if (!res.ok) throw new Error(await responseErrorMessage(res));
@@ -1220,6 +1303,7 @@ export const corpusApi = {
 
 export async function streamLiteratureSearchJob(jobId, onEvent) {
   const res = await fetch(`${LS_BASE}/jobs/${encodeURIComponent(jobId)}/stream`, {
+    credentials: "include",
     headers: apiHeaders(),
   });
   if (!res.ok || !res.body) {

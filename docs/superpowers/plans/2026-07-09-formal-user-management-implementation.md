@@ -1221,7 +1221,7 @@ git commit -m "feat: authenticate api tokens"
 - Modify: `frontend/src/api/client.js`
 - Modify: `frontend/tests/api_client_contract.test.mjs`
 
-- [ ] **Step 1: Write frontend API tests**
+- [x] **Step 1: Write frontend API tests**
 
 Add to `frontend/tests/api_client_contract.test.mjs`:
 
@@ -1249,7 +1249,7 @@ test("authApi uses cookie credentials and account mutations include csrf", async
 });
 ```
 
-- [ ] **Step 2: Run frontend API test and verify it fails**
+- [x] **Step 2: Run frontend API test and verify it fails**
 
 Run:
 
@@ -1259,7 +1259,7 @@ cd frontend && node --test tests/api_client_contract.test.mjs
 
 Expected: FAIL because `authApi` and `accountApi` do not exist.
 
-- [ ] **Step 3: Update frontend API client**
+- [x] **Step 3: Update frontend API client**
 
 In `frontend/src/api/client.js`:
 
@@ -1321,7 +1321,7 @@ export const adminApi = {
 
 Update existing `apiRequest()` and `multipartRequest()` to pass `credentials: "include"` so cookie auth works for all existing APIs.
 
-- [ ] **Step 4: Run frontend API tests**
+- [x] **Step 4: Run frontend API tests**
 
 Run:
 
@@ -1331,7 +1331,7 @@ cd frontend && node --test tests/api_client_contract.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit frontend API task**
+- [x] **Step 5: Commit frontend API task**
 
 ```bash
 git add frontend/src/api/client.js frontend/tests/api_client_contract.test.mjs

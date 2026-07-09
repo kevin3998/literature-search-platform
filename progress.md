@@ -346,3 +346,15 @@
   - `PYTHONPATH=backend pytest backend/tests -q` -> 713 passed, 24 skipped.
   - `node --test frontend/tests/*.test.mjs` -> 69 passed.
   - `npm --prefix frontend run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-09 formal user management task 7
+- Added formal browser-auth frontend API contracts and client support:
+  - exported `authApi`, `accountApi`, and `adminApi` from `frontend/src/api/client.js`;
+  - all formal browser API calls send `credentials: "include"`;
+  - account/admin/logout mutations fetch `/api/auth/csrf` and send `X-CSRF-Token`;
+  - admin user/audit queries use encoded query strings and user IDs.
+- Kept the existing development `X-User-Id` adapter behavior through `apiHeaders()` / `apiUploadHeaders()`.
+- Verification:
+  - `cd frontend && node --test tests/api_client_contract.test.mjs` -> 40 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 85 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
