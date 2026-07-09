@@ -50,6 +50,9 @@ app.add_middleware(
 )
 
 from api import (  # noqa: E402 - auth/database safety checks must run before router imports.
+    account_router,
+    admin_router,
+    auth_router,
     chat_router,
     corpus_router,
     library_router,
@@ -60,6 +63,9 @@ from api import (  # noqa: E402 - auth/database safety checks must run before ro
     workflow_router,
 )
 
+app.include_router(auth_router.router)
+app.include_router(account_router.router)
+app.include_router(admin_router.router)
 app.include_router(modules_router.router)
 app.include_router(chat_router.router)
 app.include_router(library_router.router)

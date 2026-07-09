@@ -136,3 +136,70 @@ def test_signup_rejects_duplicate_email():
 
         with pytest.raises(ValueError, match="email already registered"):
             store.signup(email=" DUPLICATE@example.com ", display_name="Duplicate", password="password123")
+
+
+def test_auth_api_signup_me_and_logout(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.auth_router import router as auth_router
+    from core.auth_store import AuthStore
+    from core.runtime_config import csrf_cookie_name, session_cookie_name
+
+    with migrated_postgres_schema():
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("COOKIE_NAME", "lap_test_session")
+        monkeypatch.setenv("CSRF_COOKIE_NAME", "lap_test_csrf")
+        session_name = session_cookie_name()
+        csrf_name = csrf_cookie_name()
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        client = TestClient(app)
+
+        signup_response = client.post(
+            "/api/auth/signup",
+            json={"email": "ApiUser@example.com", "display_name": "API User", "password": "password123"},
+        )
+        me_response = client.get("/api/auth/me")
+        logout_response = client.post("/api/auth/logout")
+        after_logout_response = client.get("/api/auth/me")
+
+    assert signup_response.status_code == 200
+    signed_up = signup_response.json()
+    assert signed_up["email"] == "apiuser@example.com"
+    assert signed_up["role"] == "admin"
+    assert session_name in signup_response.cookies
+    assert csrf_name in signup_response.cookies
+    assert me_response.status_code == 200
+    assert me_response.json()["email"] == "apiuser@example.com"
+    assert logout_response.status_code == 200
+    assert logout_response.json() == {"ok": True}
+    assert after_logout_response.status_code == 401
+
+
+def test_auth_api_login_sets_fresh_session_cookie(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.auth_router import router as auth_router
+    from core.auth_store import AuthStore
+    from core.runtime_config import session_cookie_name
+
+    with migrated_postgres_schema():
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("COOKIE_NAME", "lap_login_session")
+        session_name = session_cookie_name()
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+        store.signup(email="login@example.com", display_name="Login User", password="password123")
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        client = TestClient(app)
+
+        failed_response = client.post("/api/auth/login", json={"email": "login@example.com", "password": "wrongpassword"})
+        login_response = client.post("/api/auth/login", json={"email": "LOGIN@example.com", "password": "password123"})
+
+    assert failed_response.status_code == 401
+    assert login_response.status_code == 200
+    assert login_response.json()["email"] == "login@example.com"
+    assert session_name in login_response.cookies
