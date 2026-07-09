@@ -2,6 +2,7 @@
 
 # Local runtime state
 .runtime/
+.worktrees/
 .superpowers/
 .aris/cache/
 
