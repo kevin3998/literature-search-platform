@@ -310,3 +310,58 @@ def test_m5_structured_async_tables_link_to_core_jobs():
 
     assert set(columns) == expected_tables
     assert fk_count == 3
+
+
+def test_formal_user_management_schema_is_present():
+    from core.db.engine import engine_for_url
+
+    with migrated_postgres_schema() as (url, schema):
+        engine = engine_for_url(url, schema=schema)
+        try:
+            with engine.connect() as conn:
+                user_columns = set(
+                    conn.execute(
+                        text(
+                            """
+                            select column_name
+                            from information_schema.columns
+                            where table_schema = :schema
+                              and table_name = 'users'
+                            """
+                        ),
+                        {"schema": schema},
+                    ).scalars()
+                )
+                auth_tables = set(
+                    conn.execute(
+                        text(
+                            """
+                            select table_name
+                            from information_schema.tables
+                            where table_schema = :schema
+                              and table_name in ('user_credentials', 'auth_sessions', 'api_tokens')
+                            """
+                        ),
+                        {"schema": schema},
+                    ).scalars()
+                )
+                session_indexes = {
+                    row["indexname"]
+                    for row in conn.execute(
+                        text(
+                            """
+                            select indexname
+                            from pg_indexes
+                            where schemaname = :schema
+                              and tablename = 'auth_sessions'
+                            """
+                        ),
+                        {"schema": schema},
+                    ).mappings()
+                }
+        finally:
+            engine.dispose()
+
+    assert {"email", "role", "status", "avatar_url", "last_login_at"}.issubset(user_columns)
+    assert auth_tables == {"user_credentials", "auth_sessions", "api_tokens"}
+    assert "uq_auth_sessions_token_hash" in session_indexes

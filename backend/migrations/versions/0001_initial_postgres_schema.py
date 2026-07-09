@@ -36,12 +36,18 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("user_id", UUID, primary_key=True),
+        sa.Column("email", sa.Text(), nullable=True),
         sa.Column("display_name", sa.Text(), nullable=False),
+        sa.Column("role", sa.Text(), nullable=False, server_default="user"),
         sa.Column("status", sa.Text(), nullable=False, server_default="active"),
+        sa.Column("avatar_url", sa.Text(), nullable=True),
         _json_obj("metadata_json"),
         _ts("created_at"),
         _ts("updated_at"),
+        sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
     )
+    op.create_index("uq_users_email_lower", "users", [sa.text("lower(email)")], unique=True, postgresql_where=sa.text("email is not null"))
+    op.create_index("idx_users_role_status", "users", ["role", "status"])
     op.create_table(
         "user_identities",
         sa.Column("identity_id", UUID, primary_key=True),
@@ -54,6 +60,65 @@ def upgrade() -> None:
         sa.UniqueConstraint("provider", "subject", name="uq_user_identities_provider_subject"),
     )
     op.create_index("idx_user_identities_user", "user_identities", ["user_id"])
+    op.create_table(
+        "user_credentials",
+        sa.Column("credential_id", UUID, primary_key=True),
+        sa.Column("user_id", UUID, sa.ForeignKey("users.user_id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("credential_type", sa.Text(), nullable=False, server_default="password"),
+        sa.Column("password_hash", sa.Text(), nullable=False),
+        sa.Column("password_algorithm", sa.Text(), nullable=False),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+    )
+    op.create_index(
+        "uq_user_credentials_active_password",
+        "user_credentials",
+        ["user_id"],
+        unique=True,
+        postgresql_where=sa.text("credential_type = 'password' and active = true"),
+    )
+    op.create_table(
+        "auth_sessions",
+        sa.Column("session_id", UUID, primary_key=True),
+        sa.Column("user_id", UUID, sa.ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False),
+        sa.Column("token_hash", sa.Text(), nullable=False),
+        sa.Column("csrf_token_hash", sa.Text(), nullable=False),
+        sa.Column("user_agent", sa.Text(), nullable=True),
+        sa.Column("ip_hash", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("revoked_reason", sa.Text(), nullable=True),
+    )
+    op.create_index("uq_auth_sessions_token_hash", "auth_sessions", ["token_hash"], unique=True)
+    op.create_index(
+        "idx_auth_sessions_user_active",
+        "auth_sessions",
+        ["user_id", "expires_at"],
+        postgresql_where=sa.text("revoked_at is null"),
+    )
+    op.create_table(
+        "api_tokens",
+        sa.Column("token_id", UUID, primary_key=True),
+        sa.Column("user_id", UUID, sa.ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("token_hash", sa.Text(), nullable=False),
+        sa.Column("token_preview", sa.Text(), nullable=False),
+        sa.Column("scopes_json", JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index("uq_api_tokens_token_hash", "api_tokens", ["token_hash"], unique=True)
+    op.create_index(
+        "idx_api_tokens_user_active",
+        "api_tokens",
+        ["user_id", "created_at"],
+        postgresql_where=sa.text("revoked_at is null"),
+    )
     op.create_table(
         "audit_events",
         sa.Column("event_id", UUID, primary_key=True),
@@ -225,6 +290,6 @@ def _create_structured_extraction_children() -> None:
 
 def downgrade() -> None:
     for table in [
-        "structured_extraction_exports", "structured_extraction_multimodal_review_suggestions", "structured_extraction_multimodal_review_jobs", "structured_extraction_review_field_states", "structured_extraction_review_events", "structured_extraction_run_events", "structured_extraction_records", "structured_extraction_run_items", "structured_extraction_runs", "structured_extraction_evidence_packet_build_items", "structured_extraction_evidence_packet_build_jobs", "structured_extraction_evidence_packet_items", "structured_extraction_evidence_packet_versions", "structured_extraction_prompt_contracts", "structured_extraction_schema_events", "structured_extraction_schema_versions", "structured_extraction_schema_drafts", "structured_extraction_collection_papers", "structured_extraction_collection_versions", "structured_extraction_candidate_events", "structured_extraction_candidates", "structured_extraction_task_events", "structured_extraction_tasks", "workflow_steps", "workflow_runs", "worker_heartbeats", "job_events", "jobs", "conversation_artifact_links", "artifacts", "tool_traces", "session_annotations", "session_attachments", "research_state_events", "evidence_states", "paper_states", "research_state", "evidence_items", "search_results", "turns", "messages", "sessions", "model_profiles", "user_secrets", "settings", "audit_events", "user_identities", "users",
+        "structured_extraction_exports", "structured_extraction_multimodal_review_suggestions", "structured_extraction_multimodal_review_jobs", "structured_extraction_review_field_states", "structured_extraction_review_events", "structured_extraction_run_events", "structured_extraction_records", "structured_extraction_run_items", "structured_extraction_runs", "structured_extraction_evidence_packet_build_items", "structured_extraction_evidence_packet_build_jobs", "structured_extraction_evidence_packet_items", "structured_extraction_evidence_packet_versions", "structured_extraction_prompt_contracts", "structured_extraction_schema_events", "structured_extraction_schema_versions", "structured_extraction_schema_drafts", "structured_extraction_collection_papers", "structured_extraction_collection_versions", "structured_extraction_candidate_events", "structured_extraction_candidates", "structured_extraction_task_events", "structured_extraction_tasks", "workflow_steps", "workflow_runs", "worker_heartbeats", "job_events", "jobs", "conversation_artifact_links", "artifacts", "tool_traces", "session_annotations", "session_attachments", "research_state_events", "evidence_states", "paper_states", "research_state", "evidence_items", "search_results", "turns", "messages", "sessions", "model_profiles", "user_secrets", "settings", "audit_events", "api_tokens", "auth_sessions", "user_credentials", "user_identities", "users",
     ]:
-        op.drop_table(table)
+        op.drop_table(table, if_exists=True)
