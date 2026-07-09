@@ -15,6 +15,7 @@ from core.passwords import hash_password, validate_password_strength, verify_pas
 from core.runtime_config import enable_signup, session_ttl_days
 
 LOCAL_PASSWORD_PROVIDER = "local-password"
+ADMIN_BOOTSTRAP_ADVISORY_LOCK_ID = 7_157_555_001_001
 
 
 class AuthStore:
@@ -36,8 +37,9 @@ class AuthStore:
 
         try:
             with self.engine.begin() as conn:
-                existing_users = conn.execute(text("select count(*) from users")).scalar_one()
-                role = "admin" if existing_users == 0 else "user"
+                conn.execute(text("select pg_advisory_xact_lock(:lock_id)"), {"lock_id": ADMIN_BOOTSTRAP_ADVISORY_LOCK_ID})
+                has_admin = conn.execute(text("select exists(select 1 from users where role = 'admin')")).scalar_one()
+                role = "user" if has_admin else "admin"
                 conn.execute(
                     text(
                         """

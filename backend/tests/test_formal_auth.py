@@ -5,6 +5,15 @@ import pytest
 from tests.postgres_test_utils import migrated_postgres_schema
 
 
+def test_session_cookie_name_prefers_cookie_name(monkeypatch):
+    from core.runtime_config import session_cookie_name
+
+    monkeypatch.setenv("COOKIE_NAME", "primary_cookie")
+    monkeypatch.setenv("SESSION_COOKIE_NAME", "legacy_cookie")
+
+    assert session_cookie_name() == "primary_cookie"
+
+
 def test_signup_bootstraps_first_admin_and_later_user():
     from core.auth_store import AuthStore
 
@@ -20,6 +29,31 @@ def test_signup_bootstraps_first_admin_and_later_user():
     assert second["email"] == "second@example.com"
     assert second["role"] == "user"
     assert second["status"] == "active"
+
+
+def test_signup_bootstraps_admin_when_legacy_non_admin_user_exists():
+    from sqlalchemy import text
+
+    from core.auth_store import AuthStore
+    from core.db.types import new_uuid, utc_now, uuid_value
+
+    with migrated_postgres_schema():
+        store = AuthStore()
+        ts = utc_now()
+        with store.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    insert into users(user_id, display_name, status, metadata_json, created_at, updated_at, role)
+                    values(:user_id, 'Legacy User', 'active', '{}'::jsonb, :ts, :ts, 'user')
+                    """
+                ),
+                {"user_id": uuid_value(new_uuid()), "ts": ts},
+            )
+
+        formal_user = store.signup(email="formal@example.com", display_name="Formal", password="password123")
+
+    assert formal_user["role"] == "admin"
 
 
 def test_login_creates_session_and_validates_cookie_token():

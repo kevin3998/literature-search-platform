@@ -73,7 +73,7 @@ def password_min_length() -> int:
 
 
 def session_cookie_name() -> str:
-    return os.getenv("SESSION_COOKIE_NAME") or "lap_session"
+    return os.getenv("COOKIE_NAME") or os.getenv("SESSION_COOKIE_NAME") or "lap_session"
 
 
 def csrf_cookie_name() -> str:
