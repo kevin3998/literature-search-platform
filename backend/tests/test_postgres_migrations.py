@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import uuid
 
-from sqlalchemy import inspect, text
+from alembic import command
+from sqlalchemy import create_engine, inspect, text
 
-from postgres_test_utils import migrated_postgres_schema
+from postgres_test_utils import alembic_config, migrated_postgres_schema, test_database_url
 
 
 CORE_TABLES = {
@@ -365,3 +368,104 @@ def test_formal_user_management_schema_is_present():
     assert {"email", "role", "status", "avatar_url", "last_login_at"}.issubset(user_columns)
     assert auth_tables == {"user_credentials", "auth_sessions", "api_tokens"}
     assert "uq_auth_sessions_token_hash" in session_indexes
+
+
+def test_formal_user_management_schema_is_owned_by_0004_only():
+    migration_dir = Path(__file__).parents[1] / "migrations" / "versions"
+    initial_schema = (migration_dir / "0001_initial_postgres_schema.py").read_text()
+    formal_auth_schema = (migration_dir / "0004_formal_user_management.py").read_text()
+
+    auth_tokens = {
+        '"email"',
+        '"avatar_url"',
+        '"last_login_at"',
+        "user_credentials",
+        "auth_sessions",
+        "api_tokens",
+        "uq_users_email_lower",
+        "idx_users_role_status",
+    }
+
+    assert not any(token in initial_schema for token in auth_tokens)
+    assert all(token in formal_auth_schema for token in auth_tokens)
+
+
+def test_formal_user_management_migrates_legacy_0003_user_to_head():
+    from core.db.engine import engine_for_url
+
+    url = test_database_url()
+    schema = f"test_{uuid.uuid4().hex}"
+    admin_engine = create_engine(url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(text(f'create schema "{schema}"'))
+
+    previous_schema = os.environ.get("DB_SCHEMA")
+    previous_database_url = os.environ.get("DATABASE_URL")
+    previous_auth_mode = os.environ.get("AUTH_MODE")
+    previous_app_env = os.environ.get("APP_ENV")
+    try:
+        os.environ["DB_SCHEMA"] = schema
+        os.environ["DATABASE_URL"] = url
+        os.environ["AUTH_MODE"] = "dev-header"
+        os.environ["APP_ENV"] = "development"
+        cfg = alembic_config(url, schema)
+
+        command.upgrade(cfg, "0003_worker_runtime_alignment")
+        user_id = uuid.uuid4()
+        engine = engine_for_url(url, schema=schema)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("insert into users(user_id, display_name) values(:user_id, 'Legacy User')"),
+                    {"user_id": user_id},
+                )
+        finally:
+            engine.dispose()
+
+        command.upgrade(cfg, "head")
+        engine = engine_for_url(url, schema=schema)
+        try:
+            with engine.connect() as conn:
+                auth_tables = set(
+                    conn.execute(
+                        text(
+                            """
+                            select table_name
+                            from information_schema.tables
+                            where table_schema = :schema
+                              and table_name in ('user_credentials', 'auth_sessions', 'api_tokens')
+                            """
+                        ),
+                        {"schema": schema},
+                    ).scalars()
+                )
+                migrated_user = conn.execute(
+                    text("select role, status from users where user_id = :user_id"),
+                    {"user_id": user_id},
+                ).mappings().one()
+        finally:
+            engine.dispose()
+    finally:
+        if previous_schema is None:
+            os.environ.pop("DB_SCHEMA", None)
+        else:
+            os.environ["DB_SCHEMA"] = previous_schema
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+        if previous_auth_mode is None:
+            os.environ.pop("AUTH_MODE", None)
+        else:
+            os.environ["AUTH_MODE"] = previous_auth_mode
+        if previous_app_env is None:
+            os.environ.pop("APP_ENV", None)
+        else:
+            os.environ["APP_ENV"] = previous_app_env
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'drop schema if exists "{schema}" cascade'))
+        admin_engine.dispose()
+
+    assert auth_tables == {"user_credentials", "auth_sessions", "api_tokens"}
+    assert migrated_user["role"] == "user"
+    assert migrated_user["status"] == "active"
