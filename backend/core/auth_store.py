@@ -280,6 +280,22 @@ class AuthStore:
         return row is not None
 
 
+class _LazyAuthStore:
+    def __init__(self) -> None:
+        self._store: AuthStore | None = None
+
+    def _get(self) -> AuthStore:
+        if self._store is None:
+            self._store = AuthStore()
+        return self._store
+
+    def user_for_session_token(self, session_token: str) -> dict[str, Any] | None:
+        return self._get().user_for_session_token(session_token)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get(), name)
+
+
 def normalize_email(email: str) -> str:
     normalized = (email or "").strip().lower()
     if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
@@ -317,6 +333,9 @@ def _user_row(row: Any) -> dict[str, Any]:
         "avatar_url": row["avatar_url"],
         "last_login_at": row["last_login_at"],
     }
+
+
+auth_store = _LazyAuthStore()
 
 
 def _insert_audit_event(

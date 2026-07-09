@@ -28,6 +28,9 @@ def me(user: UserContext = Depends(current_user)):
         "subject": user.subject,
         "display_name": user.display_name,
         "auth_mode": user.auth_mode,
+        "role": user.role,
+        "status": user.status,
+        "email": user.email,
     }
 
 

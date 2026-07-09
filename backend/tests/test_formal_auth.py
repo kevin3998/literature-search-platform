@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 from tests.postgres_test_utils import migrated_postgres_schema
 
@@ -77,6 +79,52 @@ def test_login_creates_session_and_validates_cookie_token():
     assert login["csrf_token"].startswith("csrf_")
     assert session_user is not None
     assert session_user["email"] == "user@example.com"
+
+
+def test_current_user_resolves_real_auth_session_cookie(monkeypatch):
+    from core.auth_store import AuthStore
+    import core.auth_store as auth_store_module
+    from core.user_context import UserContext, current_user
+
+    with migrated_postgres_schema():
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("COOKIE_NAME", "lap_test")
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+        signed_up = store.signup(email="session@example.com", display_name="Session User", password="password123")
+        login = store.login(email="session@example.com", password="password123", user_agent="pytest", ip_address="127.0.0.1")
+
+        app = FastAPI()
+
+        @app.get("/session-whoami")
+        def session_whoami(user: UserContext = Depends(current_user)):
+            return {
+                "user_id": user.user_id,
+                "workspace_slug": user.workspace_slug,
+                "subject": user.subject,
+                "display_name": user.display_name,
+                "auth_mode": user.auth_mode,
+                "role": user.role,
+                "status": user.status,
+                "email": user.email,
+            }
+
+        client = TestClient(app)
+        client.cookies.set("lap_test", login["session_token"])
+        response = client.get("/session-whoami")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": signed_up["user_id"],
+        "workspace_slug": signed_up["user_id"],
+        "subject": "session@example.com",
+        "display_name": "Session User",
+        "auth_mode": "local-password",
+        "role": "admin",
+        "status": "active",
+        "email": "session@example.com",
+    }
 
 
 def test_signup_rejects_duplicate_email():
