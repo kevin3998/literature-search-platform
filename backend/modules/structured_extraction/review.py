@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
 
 from .artifacts import write_review_artifacts
 from .schemas import ReviewBulkRequest, ReviewFieldActionRequest, ReviewFieldEditRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, now
 
 FIELD_STATUSES = {"unreviewed", "accepted", "edited", "rejected", "rerun_required", "locked", "multimodal_pending"}
 EVENT_TYPES = {

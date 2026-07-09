@@ -18,9 +18,7 @@ structured_extraction_evidence_packet_service = StructuredExtractionEvidencePack
     structured_extraction_store,
     structured_extraction_prompt_contract_service,
 )
-structured_extraction_evidence_packet_service.reap_orphaned_build_jobs()
 structured_extraction_run_service = StructuredExtractionRunService(structured_extraction_store)
-structured_extraction_run_service.reap_orphaned_runs()
 structured_extraction_review_service = StructuredExtractionReviewService(structured_extraction_store)
 structured_extraction_multimodal_review_service = StructuredExtractionMultimodalReviewService(
     structured_extraction_store,

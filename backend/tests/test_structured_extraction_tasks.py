@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi.testclient import TestClient
+
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def test_structured_extraction_task_lifecycle_contract(monkeypatch, tmp_path):
@@ -20,8 +23,8 @@ def test_structured_extraction_task_lifecycle_contract(monkeypatch, tmp_path):
     )
     assert created.status_code == 200
     task = created.json()
-    assert task["task_id"].startswith("ext_")
-    assert task["user_id"] == "alice"
+    assert UUID_RE.match(task["task_id"])
+    assert UUID_RE.match(task["user_id"])
     assert task["name"] == "AI 综述工具数据抽取"
     assert task["description"] == "first pass"
     assert task["status"] == "draft"
@@ -33,7 +36,7 @@ def test_structured_extraction_task_lifecycle_contract(monkeypatch, tmp_path):
     assert task["deleted_at"] is None
     assert task["last_run_at"] is None
 
-    workspace = tmp_path / "users" / "alice" / task["workspace_rel_path"]
+    workspace = tmp_path / "users" / task["user_id"] / task["workspace_rel_path"]
     assert workspace.exists()
     assert (workspace / "task.json").exists()
     for dirname in ["collection", "schemas", "evidence_packets", "prompts", "runs", "exports", "audit"]:

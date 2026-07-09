@@ -256,7 +256,7 @@ def test_prompt_contract_and_evidence_packet_preparation(monkeypatch, tmp_path):
 
     task_after = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
     assert task_after["status"] == "schema_ready"
-    workspace = root / "users" / "alice" / task_after["workspace_rel_path"]
+    workspace = root / "users" / task_after["user_id"] / task_after["workspace_rel_path"]
     assert json.loads((workspace / "prompts" / "prompt_contract_pc_v1.json").read_text(encoding="utf-8"))["prompt_contract_version"] == "pc_v1"
     assert json.loads((workspace / "prompts" / "output_contract_pc_v1.json").read_text(encoding="utf-8"))["record_unit"] == "sample_level"
     assert json.loads((workspace / "evidence_packets" / "packet_ep_v1.json").read_text(encoding="utf-8"))["packet_version"] == "ep_v1"

@@ -16,9 +16,9 @@ class EmptyLLMOutput(RuntimeError):
     pass
 
 
-async def expand_question(payload: QuestionExpansionRequest, *, task: dict[str, Any]) -> dict[str, Any]:
+async def expand_question(payload: QuestionExpansionRequest, *, task: dict[str, Any], user: UserContext) -> dict[str, Any]:
     try:
-        llm = build_llm_client(settings_store)
+        llm = build_llm_client(settings_store, user_id=user.user_id)
     except LLMUnavailable:
         return {"available": False, "reason": "llm_unavailable", "queries": []}
     limit = max(3, min(int(payload.limit or 5), 8))
@@ -76,7 +76,7 @@ async def screen_candidates(
     user: UserContext,
 ) -> dict[str, Any]:
     try:
-        llm = build_llm_client(settings_store)
+        llm = build_llm_client(settings_store, user_id=user.user_id)
     except LLMUnavailable:
         return {"available": False, "reason": "llm_unavailable", "updated": 0, "candidates": []}
     candidates = []

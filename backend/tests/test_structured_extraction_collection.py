@@ -213,7 +213,7 @@ def test_collection_builder_metadata_search_decisions_and_freeze(monkeypatch, tm
     assert task_after["current_collection_version"] == "col_v1"
     assert task_after["stats"]["paper_count"] == 2
 
-    workspace = tmp_path / "users" / "alice" / task_after["workspace_rel_path"] / "collection"
+    workspace = tmp_path / "users" / task_after["user_id"] / task_after["workspace_rel_path"] / "collection"
     assert (workspace / "candidates.jsonl").exists()
     assert (workspace / "candidate_decisions.jsonl").exists()
     assert json.loads((workspace / "collection_v1.json").read_text(encoding="utf-8"))["paper_count"] == 2

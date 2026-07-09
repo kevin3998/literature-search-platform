@@ -17,7 +17,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.memory_db import now
 from modules.literature_search.agent import tool_errors as te
 from modules.literature_search.agent.tool_specs import (
     JOB_REQUIRED,
@@ -59,6 +58,10 @@ _TRACE_EVENT_FIELDS = (
 )
 
 
+def now() -> float:
+    return time.time()
+
+
 @dataclass
 class ToolResult:
     """Outcome of one tool call."""
@@ -82,6 +85,7 @@ class ToolRegistry:
         job_runner=None,
         role_tools: frozenset[str] | None = None,
         original_question: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         self.service = service
         self.session_store = session_store
@@ -100,6 +104,7 @@ class ToolRegistry:
         self.enabled = list(self.specs)
         self._job_runner = job_runner
         self.original_question = original_question or ""
+        self.user_id = user_id
 
     @property
     def job_runner(self):
@@ -203,7 +208,7 @@ class ToolRegistry:
         is governed by the spec timeout.
         """
         runner = self.job_runner
-        payload = {**arguments, "session_id": self.session_id, "turn_id": self.turn_id}
+        payload = {**arguments, "session_id": self.session_id, "turn_id": self.turn_id, "user_id": self.user_id}
         job = await _thread(runner.submit, spec.name, payload)
         job_id = job["job_id"]
         events: list[dict[str, Any]] = [
@@ -293,7 +298,7 @@ class ToolRegistry:
             "completed_at": now(),
         }
         try:
-            self.session_store.record_tool_trace(trace, session_id=self.session_id, turn_id=self.turn_id)
+            self.session_store.record_tool_trace(trace, session_id=self.session_id, turn_id=self.turn_id, user_id=self.user_id)
         except Exception:  # noqa: BLE001 - tracing must never break a tool call
             pass
         result.events.append({"type": "tool_trace", **{k: trace[k] for k in _TRACE_EVENT_FIELDS}})
@@ -335,7 +340,7 @@ class ToolRegistry:
             "fallback_reason": packet.get("fallback_reason"),
             "results": cards,
         }
-        self.session_store.record_search_result(self.session_id, self.turn_id, search_payload)
+        self.session_store.record_search_result(self.session_id, self.turn_id, search_payload, user_id=self.user_id)
         evidence = _collect_evidence(context_papers)
         events = [
             {
@@ -446,6 +451,7 @@ class ToolRegistry:
                 session_id=self.session_id,
                 turn_id=self.turn_id,
                 link_type=artifact.get("artifact_type") or link_type,
+                user_id=self.user_id,
             )
             events.append(artifact)
         return ToolResult(summary=summary, content=data, events=events)

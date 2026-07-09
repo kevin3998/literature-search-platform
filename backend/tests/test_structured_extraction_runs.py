@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 
 from test_structured_extraction_preparation import _client_with_schema
+
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 class FakeLLM:
@@ -29,9 +32,27 @@ def _prepare_inputs(client, task_id: str) -> None:
     assert built.status_code == 200
 
 
+def _run_structured_worker_once(max_jobs: int = 10) -> None:
+    import main
+    from core.worker.queue import JobQueue
+    from core.worker.registry import build_handler_registry
+    from core.worker.runtime import WorkerRuntime
+
+    engine = main.postgres_engine
+    runtime = WorkerRuntime(
+        JobQueue(engine),
+        build_handler_registry(engine=engine),
+        worker_id="test-structured-worker",
+        queues=["structured-extraction"],
+        max_jobs_per_tick=max_jobs,
+    )
+    runtime.run_once()
+
+
 def _wait_for_terminal(client, task_id: str, run_id: str, timeout: float = 3.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _run_structured_worker_once()
         run = client.get(f"/api/structured-extraction/tasks/{task_id}/runs/{run_id}", headers={"X-User-Id": "alice"}).json()
         if run["status"] in {"completed", "completed_with_errors", "failed", "cancelled"}:
             return run
@@ -95,8 +116,8 @@ def test_extraction_run_success_merges_records_and_writes_artifacts(monkeypatch,
 
     import modules.structured_extraction.llm_extraction as llm_extraction
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
 
     missing = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", json={"packet_version": "missing"}, headers={"X-User-Id": "alice"})
     assert missing.status_code == 400
@@ -105,7 +126,7 @@ def test_extraction_run_success_merges_records_and_writes_artifacts(monkeypatch,
     started = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"})
     assert started.status_code == 200
     run = started.json()
-    assert run["run_id"].startswith("run_")
+    assert UUID_RE.match(run["run_id"])
     assert run["status"] in {"queued", "running"}
     assert run["packet_version"] == "ep_v1"
     assert run["model_snapshot"]["model"] == "strong"
@@ -136,7 +157,7 @@ def test_extraction_run_success_merges_records_and_writes_artifacts(monkeypatch,
     assert task["status"] == "review_required"
     assert task["stats"]["run_count"] == 1
     assert task["last_run_at"] is not None
-    workspace = root / "users" / "alice" / task["workspace_rel_path"] / "runs"
+    workspace = root / "users" / task["user_id"] / task["workspace_rel_path"] / "runs"
     assert (workspace / f"run_{run['run_id']}.json").exists()
     assert (workspace / f"run_{run['run_id']}_items.jsonl").exists()
     assert (workspace / f"run_{run['run_id']}_records.jsonl").exists()
@@ -159,8 +180,8 @@ def test_extraction_run_partial_invalid_output_and_llm_unavailable(monkeypatch, 
 
     import modules.structured_extraction.llm_extraction as llm_extraction
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
 
     started = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     final = _wait_for_terminal(client, task_id, started["run_id"])
@@ -169,7 +190,7 @@ def test_extraction_run_partial_invalid_output_and_llm_unavailable(monkeypatch, 
     failed_items = client.get(f"/api/structured-extraction/tasks/{task_id}/runs/{started['run_id']}/items", headers={"X-User-Id": "alice"}).json()["items"]
     assert any(item["status"] == "failed" and item["error"]["reason"] == "llm_output_invalid" for item in failed_items)
 
-    def unavailable(_settings_store, strong=False):
+    def unavailable(_settings_store, strong=False, user_id=None):
         from core.llm import LLMUnavailable
 
         raise LLMUnavailable("no model")
@@ -225,8 +246,8 @@ def test_extraction_run_tolerates_non_object_record_identity(monkeypatch, tmp_pa
 
     import modules.structured_extraction.llm_extraction as llm_extraction
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
 
     started = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     final = _wait_for_terminal(client, task_id, started["run_id"])
@@ -251,8 +272,8 @@ def test_extraction_run_cancel_and_orphan_reap(monkeypatch, tmp_path):
     from modules.structured_extraction.extraction_runs import StructuredExtractionRunService
     from modules.structured_extraction.shared import structured_extraction_run_service
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: SlowLLM())
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: SlowLLM())
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
 
     run = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     cancelled = client.post(f"/api/structured-extraction/tasks/{task_id}/runs/{run['run_id']}/cancel", headers={"X-User-Id": "alice"})

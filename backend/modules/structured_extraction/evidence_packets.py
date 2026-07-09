@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import re
 import sqlite3
-import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
+from core.worker.queue import JobQueue
 from modules.literature_search import literature_search_shared
 
 from .artifacts import write_evidence_packet_version
 from .prompt_contract import StructuredExtractionPromptContractService
 from .schemas import EvidencePacketBuildRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, new_uuid, now
 
 ACTIVE_BUILD_STATUSES = {"queued", "running", "cancelling"}
 TERMINAL_BUILD_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
@@ -29,7 +27,7 @@ class StructuredExtractionEvidencePacketService:
     def __init__(self, store: StructuredExtractionStore, prompt_contracts: StructuredExtractionPromptContractService) -> None:
         self.store = store
         self.prompt_contracts = prompt_contracts
-        self._threads: dict[str, threading.Thread] = {}
+        self.job_queue = JobQueue(self.store.engine)
 
     def build(self, task_id: str, payload: EvidencePacketBuildRequest, *, user: UserContext) -> dict[str, Any]:
         ctx = self._build_context(task_id, payload, user=user)
@@ -47,7 +45,7 @@ class StructuredExtractionEvidencePacketService:
         if active:
             return self._row_to_build_job(active)
         ctx = self._build_context(task_id, payload, user=user)
-        build_job_id = f"epb_{uuid.uuid4().hex[:12]}"
+        build_job_id = new_uuid()
         target_packet_version = self._next_version(task_id)
         ts = now()
         self.store.conn.execute(
@@ -75,9 +73,17 @@ class StructuredExtractionEvidencePacketService:
             ),
         )
         self.store.conn.commit()
-        thread = threading.Thread(target=self._worker_entry, args=(task_id, build_job_id, user.user_id), daemon=True)
-        self._threads[build_job_id] = thread
-        thread.start()
+        core_job = self.job_queue.enqueue(
+            "structured.evidence_packet_build",
+            {"task_id": task_id, "build_job_id": build_job_id, "user_id": user.user_id},
+            user_id=user.user_id,
+            queue="structured-extraction",
+        )
+        self.store.conn.execute(
+            "update structured_extraction_evidence_packet_build_jobs set core_job_id = ? where build_job_id = ?",
+            (core_job["job_id"], build_job_id),
+        )
+        self.store.conn.commit()
         return self.get_build_job(task_id, build_job_id, user=user)
 
     def list_build_jobs(self, task_id: str, *, user: UserContext) -> dict[str, Any]:
@@ -109,6 +115,11 @@ class StructuredExtractionEvidencePacketService:
         job = self.get_build_job(task_id, build_job_id, user=user)
         if job["status"] in TERMINAL_BUILD_STATUSES:
             return job
+        if job["status"] == "queued":
+            self._finish_cancelled(build_job_id)
+            if job.get("core_job_id"):
+                self.job_queue.cancel(job["core_job_id"])
+            return self.get_build_job(task_id, build_job_id, user=user)
         ts = now()
         self.store.conn.execute(
             """
@@ -119,6 +130,8 @@ class StructuredExtractionEvidencePacketService:
             (ts, task_id, user.user_id, build_job_id),
         )
         self.store.conn.commit()
+        if job.get("core_job_id"):
+            self.job_queue.cancel(job["core_job_id"])
         return self.get_build_job(task_id, build_job_id, user=user)
 
     def reap_orphaned_build_jobs(self) -> list[str]:
@@ -264,7 +277,7 @@ class StructuredExtractionEvidencePacketService:
             }
         )
         item = {
-            "packet_item_id": f"epi_{uuid.uuid4().hex[:12]}",
+            "packet_item_id": new_uuid(),
             "packet_version": packet_version,
             "task_id": "",
             "paper_id": paper_id,
@@ -721,6 +734,7 @@ class StructuredExtractionEvidencePacketService:
             "settings": loads(row["settings_json"], {}) or {},
             "warnings_preview": loads(row["warnings_preview_json"], []) or [],
             "error": loads(row["error_json"], {}) if row["error_json"] else None,
+            "core_job_id": row["core_job_id"] if "core_job_id" in row.keys() else None,
             "created_at": row["created_at"],
             "started_at": row["started_at"],
             "updated_at": row["updated_at"],

@@ -15,12 +15,18 @@ def check_postgres_connection(engine: Engine) -> dict:
     return {"status": "ok" if value == 1 else "error", "select_1": value}
 
 
-def check_alembic_at_head(engine: Engine, *, config_path: str | Path = "backend/alembic.ini") -> dict:
+def _default_alembic_config_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "alembic.ini"
+
+
+def check_alembic_at_head(engine: Engine, *, config_path: str | Path | None = None) -> dict:
+    config_path = config_path or _default_alembic_config_path()
     cfg = Config(str(config_path))
     script = ScriptDirectory.from_config(cfg)
     heads = set(script.get_heads())
     with engine.connect() as conn:
-        context = MigrationContext.configure(conn)
+        schema = conn.execute(text("select current_schema()")).scalar_one()
+        context = MigrationContext.configure(conn, opts={"version_table_schema": schema})
         current = set(context.get_current_heads())
     missing = sorted(heads - current)
     return {

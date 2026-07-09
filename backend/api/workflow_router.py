@@ -61,13 +61,7 @@ def create(payload: CreateWorkflowRequest, user: UserContext = Depends(current_u
             "scope_options": payload.scope_options,
             "user_id": user.user_id,
         }
-        try:
-            return workflow_store.create(payload.template_id, **create_kwargs)
-        except TypeError as exc:
-            if "user_id" not in str(exc):
-                raise
-            create_kwargs.pop("user_id", None)
-            return workflow_store.create(payload.template_id, **create_kwargs)
+        return workflow_store.create(payload.template_id, **create_kwargs)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -83,8 +77,7 @@ def list_workflows(limit: int = 50, user: UserContext = Depends(current_user)):
 @router.get("/{workflow_id}/artifacts/{artifact_id:path}")
 def get_workflow_artifact(workflow_id: str, artifact_id: str, user: UserContext = Depends(current_user)):
     try:
-        workflow_store.get(workflow_id, user_id=user.user_id)
-        return workflow_orchestrator.artifact_preview(workflow_id, artifact_id)
+        return workflow_orchestrator.artifact_preview(workflow_id, artifact_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -92,8 +85,7 @@ def get_workflow_artifact(workflow_id: str, artifact_id: str, user: UserContext 
 @router.get("/{workflow_id}/insights")
 def get_workflow_insights(workflow_id: str, user: UserContext = Depends(current_user)):
     try:
-        workflow_store.get(workflow_id, user_id=user.user_id)
-        return workflow_orchestrator.workflow_insights(workflow_id)
+        return workflow_orchestrator.workflow_insights(workflow_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -101,8 +93,7 @@ def get_workflow_insights(workflow_id: str, user: UserContext = Depends(current_
 @router.get("/{workflow_id}")
 def get_workflow(workflow_id: str, user: UserContext = Depends(current_user)):
     try:
-        workflow_store.get(workflow_id, user_id=user.user_id)
-        return workflow_orchestrator.detail(workflow_id)
+        return workflow_orchestrator.detail(workflow_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -110,8 +101,7 @@ def get_workflow(workflow_id: str, user: UserContext = Depends(current_user)):
 @router.post("/{workflow_id}/start")
 def start_workflow(workflow_id: str, user: UserContext = Depends(current_user)):
     try:
-        workflow_store.get(workflow_id, user_id=user.user_id)
-        return workflow_orchestrator.start(workflow_id)
+        return workflow_orchestrator.start(workflow_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -119,8 +109,7 @@ def start_workflow(workflow_id: str, user: UserContext = Depends(current_user)):
 @router.post("/{workflow_id}/resume")
 def resume_workflow(workflow_id: str, user: UserContext = Depends(current_user)):
     try:
-        workflow_store.get(workflow_id, user_id=user.user_id)
-        return workflow_orchestrator.start(workflow_id, resume=True)
+        return workflow_orchestrator.start(workflow_id, resume=True, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 

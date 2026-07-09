@@ -11,13 +11,12 @@ control for P1 is resume-from-failed-stage, which the underlying engine supports
 """
 from __future__ import annotations
 
-import threading
 import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from core.memory_db import now
+from core.db.types import to_unix_seconds, utc_now
 from core.workspace_paths import user_workspace_root
 from modules.research_agent_controller.skills.screening_tools import render_screening_summary_markdown
 
@@ -64,6 +63,10 @@ _DIAGNOSTIC_ARTIFACTS_BY_SUFFIX = {
     "screening/screening_diagnostics.json": ("screen_novelty_feasibility_risk", "筛选诊断", "screening_diagnostics"),
 }
 
+
+def _now() -> float:
+    return to_unix_seconds(utc_now()) or 0.0
+
 from .runners.base import RunnerContext, StepFailed
 from .runners.corpus_stage import CorpusStageRunner
 from .runners.agent_step import AgentStepRunner
@@ -91,20 +94,20 @@ class WorkflowOrchestrator:
         self._pause_flags: dict[str, bool] = {}
 
     # ---- control ------------------------------------------------------------
-    def start(self, workflow_id: str, *, resume: bool = False) -> dict[str, Any]:
-        wf = self.store.get(workflow_id)
+    def start(self, workflow_id: str, *, resume: bool = False, user_id: str | None = None) -> dict[str, Any]:
+        wf = self.store.get(workflow_id, user_id=user_id)
         if wf["status"] == "running":
             raise ValueError("workflow already running")
         self._pause_flags.pop(workflow_id, None)
-        orch_job = self.job_store.create("workflow", {"workflow_id": workflow_id}, user_id=wf.get("user_id"))
+        orch_job = self.job_store.create(
+            "workflow.run",
+            {"workflow_id": workflow_id, "user_id": wf.get("user_id"), "resume": bool(resume)},
+            user_id=wf.get("user_id"),
+            queue="workflow",
+        )
         orch_job_id = orch_job["job_id"]
         self.store.set_engine_ref(workflow_id, orchestrator_job_id=orch_job_id)
-        self.store.update_status(workflow_id, "running", started_at=wf.get("started_at") or now())
-        self.job_store.start(orch_job_id)
-        thread = threading.Thread(
-            target=self._run, args=(workflow_id, orch_job_id, resume), daemon=True
-        )
-        thread.start()
+        self.store.update_status(workflow_id, "running", started_at=wf.get("started_at") or _now())
         return {
             "job_id": orch_job_id,
             "status": "running",
@@ -113,12 +116,20 @@ class WorkflowOrchestrator:
 
     def request_pause(self, workflow_id: str) -> None:
         self._pause_flags[workflow_id] = True
+        self.store.set_engine_ref(workflow_id, pause_requested=True)
+
+    def execute_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        payload = job.get("payload") or {}
+        workflow_id = payload["workflow_id"]
+        resume = bool(payload.get("resume"))
+        user_id = payload.get("user_id") or job.get("user_id")
+        return self._run(workflow_id, job["job_id"], resume, user_id)
 
     # ---- execution ----------------------------------------------------------
-    def _run(self, workflow_id: str, orch_job_id: str, resume: bool) -> None:
+    def _run(self, workflow_id: str, orch_job_id: str, resume: bool, user_id: str | None) -> dict[str, Any]:
         ctx = RunnerContext(self.store, self.job_store, self.job_runner, self.service)
         try:
-            wf = self.store.get(workflow_id)
+            wf = self.store.get(workflow_id, user_id=user_id)
             steps = wf["manifest"].get("steps", [])
             ran_any = False
             for step in steps:
@@ -141,24 +152,25 @@ class WorkflowOrchestrator:
                         },
                     )
                     break
-                if self._pause_flags.get(workflow_id):
-                    self.store.update_status(workflow_id, "paused")
+                wf_ref = self.store.get(workflow_id, user_id=user_id).get("engine_ref") or {}
+                if self._pause_flags.get(workflow_id) or wf_ref.get("pause_requested"):
                     self.job_store.add_event(orch_job_id, {"type": "workflow_status", "status": "paused"})
-                    self.job_store.complete(orch_job_id, {"paused": True})
-                    return
+                    self.store.update_status(workflow_id, "paused")
+                    self.store.set_engine_ref(workflow_id, pause_requested=False)
+                    return {"workflow_id": workflow_id, "status": "paused", "paused": True}
                 runner.execute(workflow_id, step, orch_job_id, resume=resume, ctx=ctx)
                 ran_any = True
             final = self._final_status(workflow_id)
-            self.store.update_status(workflow_id, final, ended_at=now())
             self.job_store.add_event(orch_job_id, {"type": "workflow_status", "status": final})
-            self.job_store.complete(orch_job_id, {"workflow_id": workflow_id, "status": final})
+            self.store.update_status(workflow_id, final, ended_at=_now())
+            return {"workflow_id": workflow_id, "status": final}
         except StepFailed as exc:
-            self.store.update_status(workflow_id, "failed", error=str(exc), ended_at=now())
             self.job_store.add_event(orch_job_id, {"type": "workflow_status", "status": "failed"})
-            self.job_store.fail(orch_job_id, str(exc))
+            self.store.update_status(workflow_id, "failed", error=str(exc), ended_at=_now())
+            raise
         except Exception as exc:  # noqa: BLE001 - never leak; record on the run
-            self.store.update_status(workflow_id, "failed", error=str(exc), ended_at=now())
-            self.job_store.fail(orch_job_id, str(exc))
+            self.store.update_status(workflow_id, "failed", error=str(exc), ended_at=_now())
+            raise
 
     def _step_status(self, workflow_id: str, step_index: int) -> str:
         for step in self.store.get(workflow_id)["steps"]:
@@ -181,14 +193,14 @@ class WorkflowOrchestrator:
         return "blocked"  # nothing could run (first step not yet built)
 
     # ---- read model ---------------------------------------------------------
-    def detail(self, workflow_id: str) -> dict[str, Any]:
+    def detail(self, workflow_id: str, *, user_id: str | None = None) -> dict[str, Any]:
         """Workflow + per-step timeline, corpus-stage steps enriched with the
         underlying run's sub-stages (live or planned).
 
         Also rehydrates the HISTORY so re-entering a finished run isn't blank:
         agent-step产物的生成内容 (read back from the .md) + a run log rebuilt from
         the persisted orchestrator job events (token events excluded)."""
-        wf = self.store.get(workflow_id)
+        wf = self.store.get(workflow_id, user_id=user_id)
         engine_ref = wf.get("engine_ref") or {}
         artifacts: list[dict[str, Any]] = []
         for step in wf["steps"]:
@@ -198,18 +210,18 @@ class WorkflowOrchestrator:
             for aid in step.get("artifact_ids", []):
                 artifacts.append({"artifact_id": aid, "step_index": step["step_index"], **_artifact_meta(aid)})
         wf["artifacts"] = artifacts
-        wf["history_log"] = self._history_log(engine_ref.get("orchestrator_job_id"))
-        wf["next_event_index"] = self._next_event_index(engine_ref.get("orchestrator_job_id"))
+        wf["history_log"] = self._history_log(engine_ref.get("orchestrator_job_id"), user_id=wf.get("user_id"))
+        wf["next_event_index"] = self._next_event_index(engine_ref.get("orchestrator_job_id"), user_id=wf.get("user_id"))
         return wf
 
-    def artifact_preview(self, workflow_id: str, artifact_id: str) -> dict[str, Any]:
+    def artifact_preview(self, workflow_id: str, artifact_id: str, *, user_id: str | None = None) -> dict[str, Any]:
         """Read a registered workflow artifact for UI preview.
 
         The artifact must already be present in detail()["artifacts"], which is
         derived from persisted step artifact ids. This prevents the preview API
         from becoming a generic file reader.
         """
-        wf = self.detail(workflow_id)
+        wf = self.detail(workflow_id, user_id=user_id)
         artifacts = {
             item.get("artifact_id"): item
             for item in wf.get("artifacts", [])
@@ -239,9 +251,9 @@ class WorkflowOrchestrator:
             "json": json_payload,
         }
 
-    def workflow_insights(self, workflow_id: str) -> dict[str, Any]:
+    def workflow_insights(self, workflow_id: str, *, user_id: str | None = None) -> dict[str, Any]:
         """Return read-only, UI-ready summaries derived from registered artifacts."""
-        wf = self.detail(workflow_id)
+        wf = self.detail(workflow_id, user_id=user_id)
         artifacts = list(wf.get("artifacts") or [])
         by_id = {
             item.get("artifact_id"): item
@@ -298,12 +310,12 @@ class WorkflowOrchestrator:
 
         return json.loads(self._read_artifact_text(artifact_id))
 
-    def _history_log(self, orch_job_id: str | None) -> list[dict[str, Any]]:
+    def _history_log(self, orch_job_id: str | None, *, user_id: str | None = None) -> list[dict[str, Any]]:
         """Rebuild the run log from persisted job events (skip token spam)."""
         if not orch_job_id:
             return []
         try:
-            events = self.job_store.events(orch_job_id)
+            events = self.job_store.events(orch_job_id, user_id=user_id)
         except Exception:  # noqa: BLE001
             return []
         log: list[dict[str, Any]] = []
@@ -320,11 +332,11 @@ class WorkflowOrchestrator:
                 log.append({"at": at, "line": f"产出：{e.get('label') or e.get('artifact_type') or e.get('artifact_id')}"})
         return log
 
-    def _next_event_index(self, orch_job_id: str | None) -> int:
+    def _next_event_index(self, orch_job_id: str | None, *, user_id: str | None = None) -> int:
         if not orch_job_id:
             return 0
         try:
-            events = self.job_store.events(orch_job_id)
+            events = self.job_store.events(orch_job_id, user_id=user_id)
         except Exception:  # noqa: BLE001
             return 0
         if not events:

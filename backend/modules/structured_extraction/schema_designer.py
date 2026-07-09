@@ -3,12 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
 
 from .artifacts import append_schema_event, write_schema_draft, write_schema_version
 from .schemas import SchemaDraftSaveRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, now
 
 ALLOWED_RECORD_UNITS = {"paper_level", "material_level", "sample_level", "experiment_level", "condition_level"}
 ALLOWED_FIELD_TYPES = {"string", "number", "boolean", "enum", "multi_enum", "list", "date", "object", "evidence_text"}

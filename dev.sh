@@ -5,13 +5,29 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 export LITERATURE_RESEARCH_CODE_DIR="${LITERATURE_RESEARCH_CODE_DIR:-/Users/chenlintao/paper-crawler-ops/literature_research}"
 export LITERATURE_DATA_DIR="${LITERATURE_DATA_DIR:-/Users/chenlintao/paper-crawler-ops/literature_data}"
 export LIBRARY_DIR="${LIBRARY_DIR:-/Users/chenlintao/paper-crawler-ops/literature_data}"
 
 RUNTIME_DIR="$ROOT_DIR/.runtime"
 mkdir -p "$RUNTIME_DIR"
-export LITERATURE_MEMORY_DB_PATH="${LITERATURE_MEMORY_DB_PATH:-$RUNTIME_DIR/platform_memory.sqlite}"
+
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://literature_agent:literature_agent_dev@127.0.0.1:${POSTGRES_PORT}/literature_agent}"
+export APP_ENV="${APP_ENV:-development}"
+export AUTH_MODE="${AUTH_MODE:-dev-header}"
+export DB_SCHEMA="${DB_SCHEMA:-literature_agent}"
+export LITERATURE_USER_DATA_ROOT="${LITERATURE_USER_DATA_ROOT:-$RUNTIME_DIR/users}"
+export LITERATURE_SECRET_KEY_PATH="${LITERATURE_SECRET_KEY_PATH:-$RUNTIME_DIR/secret.key}"
+export WORKER_QUEUES="${WORKER_QUEUES:-default,workflow,structured-extraction}"
+export START_WORKER="${START_WORKER:-1}"
 
 BACKEND_PYTHON="${BACKEND_PYTHON:-/opt/anaconda3/envs/pc_plus/bin/python}"
 if [[ ! -x "$BACKEND_PYTHON" ]]; then
@@ -33,6 +49,7 @@ BACKEND_RELOAD="${BACKEND_RELOAD:-0}"
 BACKEND_CONTRACT_PROBE="/api/structured-extraction/tasks/__route_probe__/collection/candidates"
 
 backend_pid=""
+worker_pid=""
 frontend_pid=""
 frontend_reused="false"
 
@@ -43,6 +60,9 @@ cleanup() {
   if [[ -n "${backend_pid}" ]]; then
     kill "${backend_pid}" 2>/dev/null || true
   fi
+  if [[ -n "${worker_pid}" ]]; then
+    kill "${worker_pid}" 2>/dev/null || true
+  fi
 }
 
 trap cleanup EXIT INT TERM
@@ -50,9 +70,33 @@ trap cleanup EXIT INT TERM
 backend_contract_ok() {
   local base_url="http://${HOST}:${BACKEND_PORT}"
   local probe_body
-  curl -fsS "${base_url}/api/readiness" >/dev/null 2>&1 || return 1
+  local readiness_body
+  readiness_body="$(curl -fsS "${base_url}/api/readiness" 2>/dev/null)" || return 1
+  if [[ "$START_WORKER" != "0" && "$START_WORKER" != "false" ]]; then
+    [[ "$readiness_body" == *'"workers.heartbeat"'* || "$readiness_body" == *'Worker heartbeat'* ]] || return 1
+    [[ "$readiness_body" == *'"overall":"error"'* ]] && return 1
+  fi
   probe_body="$(curl -sS "${base_url}${BACKEND_CONTRACT_PROBE}" 2>/dev/null || true)"
   [[ "$probe_body" == *"structured extraction task not found"* ]]
+}
+
+run_migrations() {
+  echo "运行 PostgreSQL migration..."
+  PYTHONPATH="$BACKEND_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    "$BACKEND_PYTHON" -m alembic -c "$BACKEND_DIR/alembic.ini" upgrade head
+}
+
+start_worker() {
+  if [[ "$START_WORKER" == "0" || "$START_WORKER" == "false" ]]; then
+    echo "START_WORKER=0：跳过 worker。后台任务会入队，但不会执行。"
+    return 0
+  fi
+  echo "启动 worker: PYTHONPATH=backend python -m core.worker.main queues=${WORKER_QUEUES}"
+  (
+    cd "$ROOT_DIR"
+    exec env PYTHONPATH="$BACKEND_DIR${PYTHONPATH:+:$PYTHONPATH}" "$BACKEND_PYTHON" -m core.worker.main
+  ) &
+  worker_pid="$!"
 }
 
 start_backend() {
@@ -89,6 +133,9 @@ stop_existing_backend() {
   fi
 }
 
+run_migrations
+start_worker
+
 echo "启动后端: http://${HOST}:${BACKEND_PORT}"
 if lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   stop_existing_backend
@@ -110,10 +157,15 @@ for _ in {1..60}; do
     echo "后端启动失败。"
     exit 1
   fi
+  if [[ -n "$worker_pid" ]] && ! kill -0 "$worker_pid" 2>/dev/null; then
+    wait "$worker_pid" || true
+    echo "worker 启动失败。"
+    exit 1
+  fi
   sleep 0.5
 done
 if ! backend_contract_ok; then
-  echo "后端未能在 30 秒内通过 /api/readiness，请检查端口或后端日志。" >&2
+  echo "后端未能在 30 秒内通过 /api/readiness，请检查 PostgreSQL、worker 或后端日志。" >&2
   exit 1
 fi
 
@@ -140,6 +192,11 @@ while true; do
   if ! kill -0 "$backend_pid" 2>/dev/null; then
     wait "$backend_pid" || true
     echo "后端已退出。"
+    exit 1
+  fi
+  if [[ -n "$worker_pid" ]] && ! kill -0 "$worker_pid" 2>/dev/null; then
+    wait "$worker_pid" || true
+    echo "worker 已退出。"
     exit 1
   fi
   if [[ "$frontend_reused" == "false" ]] && ! kill -0 "$frontend_pid" 2>/dev/null; then

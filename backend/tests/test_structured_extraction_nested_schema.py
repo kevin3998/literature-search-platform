@@ -6,6 +6,7 @@ import time
 from fastapi.testclient import TestClient
 
 from test_structured_extraction_preparation import _make_index
+from test_structured_extraction_runs import _run_structured_worker_once
 
 
 class FakeLLM:
@@ -160,6 +161,7 @@ def _client_with_nested_schema(monkeypatch, tmp_path):
 def _wait_for_terminal(client, task_id: str, run_id: str, timeout: float = 3.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _run_structured_worker_once()
         run = client.get(f"/api/structured-extraction/tasks/{task_id}/runs/{run_id}", headers={"X-User-Id": "alice"}).json()
         if run["status"] in {"completed", "completed_with_errors", "failed", "cancelled"}:
             return run
@@ -248,8 +250,8 @@ def test_nested_material_extraction_review_and_export_json(monkeypatch, tmp_path
 
     import modules.structured_extraction.llm_extraction as llm_extraction
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
 
     run = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     final = _wait_for_terminal(client, task_id, run["run_id"])
@@ -289,10 +291,11 @@ def test_nested_material_extraction_review_and_export_json(monkeypatch, tmp_path
     assert exported["record_count"] == 1
     assert exported["top_level_section_count"] == 5
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    export_dir = root / "users" / "alice" / task["workspace_rel_path"] / "exports" / "exp_v1"
-    exported_json = json.loads((export_dir / "records_exp_v1.json").read_text(encoding="utf-8"))
+    export_id = exported["export_id"]
+    export_dir = root / "users" / task["user_id"] / task["workspace_rel_path"] / "exports" / export_id
+    exported_json = json.loads((export_dir / f"records_{export_id}.json").read_text(encoding="utf-8"))
     assert exported_json["records"][0]["data"]["composition"]["base_polymers"][0]["concentration_text"] == "16 wt%"
-    csv_text = (export_dir / "records_exp_v1.csv").read_text(encoding="utf-8-sig")
+    csv_text = (export_dir / f"records_{export_id}.csv").read_text(encoding="utf-8-sig")
     assert "classification.membrane_type" in csv_text
 
 

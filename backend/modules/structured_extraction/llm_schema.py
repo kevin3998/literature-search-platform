@@ -6,6 +6,7 @@ from typing import Any
 
 from core.llm import LLMUnavailable, build_llm_client
 from core.settings_store import settings_store
+from core.user_context import UserContext
 
 from .schemas import SchemaAssistRequest
 
@@ -14,9 +15,9 @@ class EmptyLLMOutput(RuntimeError):
     pass
 
 
-async def assist_schema(payload: SchemaAssistRequest, *, task: dict[str, Any]) -> dict[str, Any]:
+async def assist_schema(payload: SchemaAssistRequest, *, task: dict[str, Any], user: UserContext) -> dict[str, Any]:
     try:
-        llm = build_llm_client(settings_store)
+        llm = build_llm_client(settings_store, user_id=user.user_id)
     except LLMUnavailable:
         return {"available": False, "reason": "llm_unavailable"}
     prompt = _prompt(payload, task=task)

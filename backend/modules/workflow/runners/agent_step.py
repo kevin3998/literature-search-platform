@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core.memory_db import now
+from core.db.types import to_unix_seconds, utc_now
 from core.workspace_paths import user_data_rel_prefix, user_workspace_root
 
 from .base import RunnerContext, StepFailed
@@ -27,6 +27,10 @@ from ..scholarly_search import render_external_context, search_external_sources
 
 _EVIDENCE_LIMIT = 20
 _TEXT_CLIP = 600
+
+
+def _now() -> float:
+    return to_unix_seconds(utc_now()) or 0.0
 
 
 class AgentStepRunner:
@@ -37,13 +41,13 @@ class AgentStepRunner:
         self._llm_factory = llm_factory
         self._external_search = external_search or search_external_sources
 
-    def _llm(self):
+    def _llm(self, user_id: str | None = None):
         if self._llm_factory is not None:
             return self._llm_factory()
         from core.settings_store import settings_store
         from core.llm.client import build_llm_client
 
-        return build_llm_client(settings_store)
+        return build_llm_client(settings_store, user_id=user_id)
 
     def execute(
         self,
@@ -58,7 +62,7 @@ class AgentStepRunner:
 
         store, job_store, service = ctx.store, ctx.job_store, ctx.service
         si = step["step_index"]
-        store.update_step(workflow_id, si, status="running", started_at=now())
+        store.update_step(workflow_id, si, status="running", started_at=_now())
         self._emit_step(job_store, orch_job_id, step, "running")
 
         sdef = get_step_def(step["step_key"])
@@ -109,7 +113,7 @@ class AgentStepRunner:
         ]
 
         try:
-            llm = self._llm()
+            llm = self._llm(user_id)
         except Exception as exc:  # noqa: BLE001 - surface a clean step error
             return self._fail(store, job_store, orch_job_id, workflow_id, step, f"LLM 不可用：{exc}")
 
@@ -131,7 +135,7 @@ class AgentStepRunner:
             )
         else:
             artifact_ids = self._write_artifact(service, job_store, orch_job_id, workflow_id, user_id, sdef, full)
-        store.update_step(workflow_id, si, status="done", ended_at=now(), artifact_ids=artifact_ids)
+        store.update_step(workflow_id, si, status="done", ended_at=_now(), artifact_ids=artifact_ids)
         self._mark_all_stages(job_store, orch_job_id, step, "done")
         self._emit_step(job_store, orch_job_id, step, "done")
         return artifact_ids
@@ -254,7 +258,7 @@ class AgentStepRunner:
         return [md_id, json_id]
 
     def _fail(self, store, job_store, orch_job_id, workflow_id, step, err) -> list[str]:
-        store.update_step(workflow_id, step["step_index"], status="failed", ended_at=now(), error=err)
+        store.update_step(workflow_id, step["step_index"], status="failed", ended_at=_now(), error=err)
         self._emit_step(job_store, orch_job_id, step, "failed", error=err)
         raise StepFailed(err)
 

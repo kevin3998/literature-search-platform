@@ -21,6 +21,16 @@ def list_modules():
     return registry.list()
 
 
+@router.get("/me")
+def me(user: UserContext = Depends(current_user)):
+    return {
+        "user_id": user.user_id,
+        "subject": user.subject,
+        "display_name": user.display_name,
+        "auth_mode": user.auth_mode,
+    }
+
+
 @router.get("/sessions")
 def list_sessions(module_id: str | None = None, include_archived: bool = False, user: UserContext = Depends(current_user)):
     return session_store.list_sessions(module_id, include_archived=include_archived, user_id=user.user_id)
@@ -124,6 +134,11 @@ def delete_session(session_id: str, user: UserContext = Depends(current_user)):
 @router.get("/sessions/{session_id}/messages")
 def session_messages(session_id: str, user: UserContext = Depends(current_user)):
     return _session_or_404(lambda: session_store.messages(session_id, user_id=user.user_id))
+
+
+@router.get("/sessions/{session_id}/bundle")
+def session_bundle(session_id: str, user: UserContext = Depends(current_user)):
+    return _session_or_404(lambda: session_store.bundle(session_id, user_id=user.user_id))
 
 
 @router.get("/sessions/{session_id}/attachments")

@@ -56,6 +56,8 @@ async def chat_stream(payload: ChatRequest, user: UserContext = Depends(current_
         options["_attachments_context"] = attachments_context
     options["_memory_context"] = memory_context
     options["_turn_id"] = turn_id
+    options["_user_id"] = user.user_id
+    options["_user_subject"] = user.subject
 
     async def event_generator():
         answer_parts: list[str] = []

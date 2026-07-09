@@ -15,6 +15,14 @@ def user_data_root() -> Path:
 def _coerce_user(user: UserContext | str | None) -> UserContext:
     if isinstance(user, UserContext):
         return user
+    if hasattr(user, "user_id") and hasattr(user, "workspace_slug"):
+        return UserContext(
+            user_id=str(getattr(user, "user_id")),
+            workspace_slug=str(getattr(user, "workspace_slug")),
+            subject=str(getattr(user, "subject", getattr(user, "user_id"))),
+            display_name=str(getattr(user, "display_name", getattr(user, "user_id"))),
+            auth_mode=str(getattr(user, "auth_mode", "dev-header")),
+        )
     user_id = validate_user_id(user or DEFAULT_USER_ID)
     return UserContext(user_id=user_id, workspace_slug=user_id)
 

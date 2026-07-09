@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
+
+import pytest
 from fastapi.testclient import TestClient
 
 from core.schemas import ChatMessage
+
+if not os.getenv("DATABASE_URL"):
+    pytest.skip(
+        "M2 settings store tests require DATABASE_URL; see test_postgres_m2_core_runtime.py for migrated coverage.",
+        allow_module_level=True,
+    )
 
 
 def test_settings_api_defaults_save_effective_and_secret_redaction(monkeypatch, tmp_path):

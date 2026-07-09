@@ -7,8 +7,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from core.db.types import to_unix_seconds, utc_now
 from core.llm import LLMUnavailable, build_llm_client
-from core.memory_db import now
 from core.settings_store import settings_store
 from core.workspace_paths import user_data_rel_prefix, user_workspace_root
 from modules.research_agent_controller import (
@@ -29,6 +29,10 @@ EMPTY_EVIDENCE_BLOCKED_MESSAGE = (
     "请先扩大检索范围、换用英文关键词，或完成索引/向量索引后重试。"
 )
 DEFAULT_ACQUIRE_EVIDENCE_TIMEOUT_SECONDS = 300.0
+
+
+def _now() -> float:
+    return to_unix_seconds(utc_now()) or 0.0
 
 
 class ResearchControllerRunner:
@@ -94,7 +98,7 @@ class ResearchControllerRunner:
             controller_plan_kind=plan_kind,
             controller_workspace_rel_path=f"{user_data_rel_prefix(user_id)}/research_agent/research_tasks/{task_id}",
         )
-        store.update_step(workflow_id, si, status="running", started_at=now())
+        store.update_step(workflow_id, si, status="running", started_at=_now())
         self._emit_step(job_store, orch_job_id, step, "running")
 
         controller = PlatformNativeFallbackController(
@@ -102,7 +106,7 @@ class ResearchControllerRunner:
             task_id,
             topic=topic,
             acquire_evidence_fn=self._acquire_evidence_fn(service),
-            llm_client=self._llm_client(service),
+            llm_client=self._llm_client(service, user_id=user_id),
             max_steps=self._MAX_STEPS.get(plan_kind, 14),
             scope_lock=scope_lock,
             retrieval_budget=retrieval_budget,
@@ -150,15 +154,15 @@ class ResearchControllerRunner:
         artifact_ids = list(dict.fromkeys(artifact_ids))
         if terminal_failure:
             _kind, message = terminal_failure
-            store.update_step(workflow_id, si, status="failed", ended_at=now(), error=message, artifact_ids=artifact_ids)
+            store.update_step(workflow_id, si, status="failed", ended_at=_now(), error=message, artifact_ids=artifact_ids)
             self._emit_step(job_store, orch_job_id, step, "failed", error=message)
             raise StepFailed(message)
         if terminal_blocked:
-            store.update_step(workflow_id, si, status="blocked", ended_at=now(), error=terminal_blocked, artifact_ids=artifact_ids)
+            store.update_step(workflow_id, si, status="blocked", ended_at=_now(), error=terminal_blocked, artifact_ids=artifact_ids)
             self._emit_step(job_store, orch_job_id, step, "blocked", error=terminal_blocked)
             return artifact_ids
 
-        store.update_step(workflow_id, si, status="done", ended_at=now(), artifact_ids=artifact_ids)
+        store.update_step(workflow_id, si, status="done", ended_at=_now(), artifact_ids=artifact_ids)
         self._mark_all_stages(job_store, orch_job_id, step, "done")
         self._emit_step(job_store, orch_job_id, step, "done")
         return artifact_ids
@@ -264,11 +268,11 @@ class ResearchControllerRunner:
         return int(metadata.get("source_candidate_count") or 0) == 0 and int(metadata.get("seed_count") or 0) == 0
 
     def _fail(self, store, job_store, orch_job_id, workflow_id, step, err) -> list[str]:
-        store.update_step(workflow_id, step["step_index"], status="failed", ended_at=now(), error=err)
+        store.update_step(workflow_id, step["step_index"], status="failed", ended_at=_now(), error=err)
         self._emit_step(job_store, orch_job_id, step, "failed", error=err)
         raise StepFailed(err)
 
-    def _llm_client(self, service):
+    def _llm_client(self, service, *, user_id: str | None = None):
         scripted = getattr(service, "_screening_llm", None)
         if scripted is not None:
             return scripted
@@ -276,7 +280,7 @@ class ResearchControllerRunner:
         if scripted is not None and getattr(scripted, "supports_screening", False):
             return scripted
         try:
-            return build_llm_client(settings_store, strong=True)
+            return build_llm_client(settings_store, strong=True, user_id=user_id)
         except LLMUnavailable:
             return None
 

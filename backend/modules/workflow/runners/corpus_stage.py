@@ -12,13 +12,17 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from core.memory_db import now
+from core.db.types import to_unix_seconds, utc_now
 
 from ..query_lang import needs_translation, to_search_query
 from .base import RunnerContext, StepFailed, gen_run_id, stages_from_run_show
 
 _POLL_SECONDS = 0.6
 _TERMINAL = {"completed", "failed", "interrupted"}
+
+
+def _now() -> float:
+    return to_unix_seconds(utc_now()) or 0.0
 
 
 class CorpusStageRunner:
@@ -40,17 +44,18 @@ class CorpusStageRunner:
     ) -> list[str]:
         store, job_store, job_runner, service = ctx.store, ctx.job_store, ctx.job_runner, ctx.service
         si = step["step_index"]
-        store.update_step(workflow_id, si, status="running", started_at=now())
+        store.update_step(workflow_id, si, status="running", started_at=_now())
         self._emit_step(job_store, orch_job_id, step, "running")
 
         wf = store.get(workflow_id)
+        user_id = wf.get("user_id") or (step.get("params") or {}).get("user_id")
         engine_ref = wf.get("engine_ref") or {}
         # run_id is keyed per step so a pipeline with multiple corpus steps
         # doesn't collide; underlying_run_id mirrors the latest for convenience.
         run_id = engine_ref.get(f"run_id_{si}")
 
         if resume and run_id:
-            sub = job_runner.submit("run_resume", {"run_id": run_id})
+            sub = job_runner.submit("run_resume", {"run_id": run_id, "user_id": user_id})
         else:
             # English-only corpus: translate a non-ASCII direction into an English
             # search query so FTS actually hits (ASCII passes through unchanged).
@@ -59,7 +64,7 @@ class CorpusStageRunner:
                 # Make the (otherwise invisible) translation a visible sub-step so
                 # the console doesn't look frozen during the LLM call.
                 job_store.add_event(orch_job_id, {"type": "stage", "stage": "translate", "status": "running", "label": "翻译检索词"})
-                search_query = to_search_query(topic, self._llm_factory)
+                search_query = to_search_query(topic, self._llm_factory, user_id=user_id)
                 job_store.add_event(orch_job_id, {"type": "stage", "stage": "translate", "status": "done", "label": f"翻译检索词 → {search_query[:48]}"})
             else:
                 search_query = topic or ""
@@ -72,12 +77,15 @@ class CorpusStageRunner:
                 "question": search_query or wf.get("topic") or "",
                 "scope": wf.get("scope") or "library",
                 "run_id": run_id,
+                "user_id": user_id,
                 **(step.get("params") or {}),
             }
             sub = job_runner.submit("run", payload)
 
         sub_job_id = sub["job_id"]
         store.update_step(workflow_id, si, job_id=sub_job_id)
+        if hasattr(job_runner, "run_inline"):
+            job_runner.run_inline(sub)
 
         artifact_ids = self._pump(job_store, service, orch_job_id, sub_job_id, run_id)
 
@@ -94,7 +102,7 @@ class CorpusStageRunner:
         ok = sub_status == "completed" and run_status in ("completed", "partial")
         if ok:
             store.update_step(
-                workflow_id, si, status="done", ended_at=now(), artifact_ids=artifact_ids
+                workflow_id, si, status="done", ended_at=_now(), artifact_ids=artifact_ids
             )
             self._emit_step(job_store, orch_job_id, step, "done")
             return artifact_ids
@@ -105,7 +113,7 @@ class CorpusStageRunner:
             or f"run status={run_status or sub_status}"
         )
         failed_stage = checkpoint.get("failed_stage")
-        store.update_step(workflow_id, si, status="failed", ended_at=now(), error=str(error), artifact_ids=artifact_ids)
+        store.update_step(workflow_id, si, status="failed", ended_at=_now(), error=str(error), artifact_ids=artifact_ids)
         self._emit_step(job_store, orch_job_id, step, "failed", error=str(error), failed_stage=failed_stage)
         raise StepFailed(str(error))
 

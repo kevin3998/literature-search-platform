@@ -119,6 +119,7 @@ const LITERATURE_TAB_LABELS = {
 
 const DEFAULT_MODELS = { openai: "gpt-4o", deepseek: "deepseek-chat", ollama: "llama3.1" };
 const DEFAULT_BASE_URLS = { deepseek: "https://api.deepseek.com/v1", ollama: "http://127.0.0.1:11434/v1" };
+const DEEPSEEK_MODELS = ["deepseek-chat", "deepseek-reasoner"];
 const AUTO_MODEL_VALUES = Object.values(DEFAULT_MODELS);
 const AUTO_BASE_URL_VALUES = Object.values(DEFAULT_BASE_URLS);
 const EMPTY_FORM = { name: "", provider: "openai", base_url: "", model: "gpt-4o", api_key: "" };
@@ -392,21 +393,17 @@ function ModelsCategory() {
           <EmptyState text="还没有模型配置。点「新增配置 / API Key」添加 provider、模型与密钥。" />
         ) : (
           <div className="overflow-hidden rounded-md border border-line">
-            <table className="w-full text-[13px]">
-              <thead className="bg-paper-50 text-ink-500">
-                <tr className="text-left">
-                  <th className="px-3 py-2 font-medium">名称</th>
-                  <th className="px-3 py-2 font-medium">API Key 状态</th>
-                  <th className="px-3 py-2 font-medium">服务商 · 模型</th>
-                  <th className="px-3 py-2 font-medium text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((p) => (
-                  <ProfileRow key={p.id} profile={p} editing={editing === p.id} onEdit={() => setEditing(editing === p.id ? null : p.id)} onClose={() => setEditing(null)} />
-                ))}
-              </tbody>
-            </table>
+            <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(170px,1fr)_minmax(0,1.2fr)_auto] gap-3 bg-paper-50 px-3 py-2 text-[13px] font-medium text-ink-500">
+              <div>名称</div>
+              <div>API Key 状态</div>
+              <div>服务商 · 模型</div>
+              <div className="text-right">操作</div>
+            </div>
+            <div>
+              {profiles.map((p) => (
+                <ProfileRow key={p.id} profile={p} editing={editing === p.id} onEdit={() => setEditing(editing === p.id ? null : p.id)} onClose={() => setEditing(null)} />
+              ))}
+            </div>
           </div>
         )}
       </section>
@@ -770,22 +767,22 @@ function ProfileRow({ profile, editing, onEdit, onClose }) {
 
   if (editing) {
     return (
-      <tr><td colSpan={4} className="p-0"><div className="bg-paper-50 p-3"><ProfileForm profile={profile} onClose={onClose} /></div></td></tr>
+      <div className="border-t border-line bg-paper-50 p-3"><ProfileForm profile={profile} onClose={onClose} /></div>
     );
   }
 
   return (
     <>
-      <tr className={clsx("border-t border-line", profile.active && "bg-amber/5")}>
-        <td className="px-3 py-2.5">
-          <div className="flex items-center gap-2 text-ink-900">
+      <div className={clsx("grid grid-cols-[minmax(0,1.1fr)_minmax(170px,1fr)_minmax(0,1.2fr)_auto] items-center gap-3 border-t border-line px-3 py-2.5 text-[13px]", profile.active && "bg-amber/5")}>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2 text-ink-900">
             {profile.active && <span className="h-1.5 w-1.5 rounded-full bg-amber" />} {profile.name}
           </div>
-        </td>
-        <td className="px-3 py-2.5">
+        </div>
+        <div className="min-w-0">
           {profile.has_key ? (
-            <div className="flex items-center gap-1.5">
-              <code className="font-mono text-[12px] text-ink-700">{shown || profile.key_masked}</code>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <code className="min-w-0 truncate font-mono text-[12px] text-ink-700">{shown || profile.key_masked}</code>
               <button title="显示/隐藏" className="text-ink-400 hover:text-ink-700" onClick={toggleReveal}>
                 {shown ? <EyeOff size={13} /> : <Eye size={13} />}
               </button>
@@ -794,13 +791,13 @@ function ProfileRow({ profile, editing, onEdit, onClose }) {
           ) : (
             <span className="text-[12px] text-amber-700">未保存密钥，点编辑补充</span>
           )}
-        </td>
-        <td className="px-3 py-2.5">
-          <div className="text-ink-700">{profile.provider} · <span className="font-mono text-[12px]">{profile.model || "—"}</span></div>
-          {profile.base_url && <div className="max-w-[220px] truncate font-mono text-[10.5px] text-ink-400">{profile.base_url}</div>}
-        </td>
-        <td className="px-3 py-2.5">
-          <div className="flex items-center justify-end gap-1.5">
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-ink-700">{profile.provider} · <span className="font-mono text-[12px]">{profile.model || "—"}</span></div>
+          {profile.base_url && <div className="truncate font-mono text-[10.5px] text-ink-400">{profile.base_url}</div>}
+        </div>
+        <div data-testid="model-profile-actions" className="shrink-0">
+          <div className="flex min-w-[112px] items-center justify-end gap-1.5">
             {profile.active ? (
               <StatusPill status="ok" text="已激活" />
             ) : (
@@ -810,10 +807,10 @@ function ProfileRow({ profile, editing, onEdit, onClose }) {
             <button className="p-1 text-ink-400 hover:text-ink-700" title="编辑配置 / 重新保存 API Key" onClick={onEdit}><Pencil size={14} /></button>
             <button className="p-1 text-ink-400 hover:text-red-600" title="删除" onClick={onRemove}><Trash2 size={14} /></button>
           </div>
-        </td>
-      </tr>
+        </div>
+      </div>
       {result && (
-        <tr className="border-t border-line bg-paper-50"><td colSpan={4} className="px-3 py-2"><ModelTestResult result={result} /></td></tr>
+        <div className="border-t border-line bg-paper-50 px-3 py-2"><ModelTestResult result={result} /></div>
       )}
     </>
   );
@@ -886,7 +883,20 @@ function ProfileForm({ profile, onClose }) {
             ))}
           </select>
         </Field>
-        <Field label="模型"><input className="form-input" value={form.model} onChange={(e) => set("model", e.target.value)} placeholder="如 gpt-4o" /></Field>
+        <Field label="模型">
+          <input
+            className="form-input"
+            value={form.model}
+            onChange={(e) => set("model", e.target.value)}
+            placeholder={form.provider === "deepseek" ? "deepseek-chat" : "如 gpt-4o"}
+            list={form.provider === "deepseek" ? "deepseek-model-options" : undefined}
+          />
+          {form.provider === "deepseek" && (
+            <datalist id="deepseek-model-options">
+              {DEEPSEEK_MODELS.map((model) => <option key={model} value={model} />)}
+            </datalist>
+          )}
+        </Field>
         <Field label="基础地址"><input className="form-input" value={form.base_url} onChange={(e) => set("base_url", e.target.value)} placeholder={form.provider === "openai_compatible" ? "必填" : "留空用默认"} /></Field>
         <Field label={isEdit ? "API Key（留空保留原密钥）" : "API Key"}>
           <input type="password" autoComplete="off" className="form-input" value={form.api_key} onChange={(e) => set("api_key", e.target.value)} placeholder="加密保存" />

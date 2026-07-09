@@ -13,10 +13,11 @@ async def extract_packet_item(
     task: dict[str, Any],
     contract: dict[str, Any],
     packet_item: dict[str, Any],
+    user_id: str,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
     prompt = build_item_prompt(task=task, contract=contract, packet_item=packet_item)
     try:
-        llm = build_llm_client(settings_store, strong=True)
+        llm = build_llm_client(settings_store, strong=True, user_id=user_id)
     except LLMUnavailable as exc:
         raise LLMUnavailable("llm_unavailable") from exc
     raw = await _collect_text(llm, prompt["messages"])
@@ -24,9 +25,9 @@ async def extract_packet_item(
     return prompt, raw, parsed
 
 
-def model_snapshot() -> dict[str, Any]:
+def model_snapshot(*, user_id: str | None = None) -> dict[str, Any]:
     try:
-        config = settings_store.model_config()
+        config = settings_store.model_config(user_id=user_id)
     except Exception:  # noqa: BLE001
         config = {}
     strong_model = config.get("strong_model")

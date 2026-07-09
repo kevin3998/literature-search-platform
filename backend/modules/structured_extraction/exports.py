@@ -3,19 +3,17 @@ from __future__ import annotations
 import csv
 import io
 import json
-import re
 import zipfile
 from html import escape as xml_escape
 from pathlib import Path
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
 
 from .artifacts import task_workspace_path, write_export_artifacts
 from .review import StructuredExtractionReviewService
 from .schemas import DEFAULT_TASK_STATS, ExportCreateRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, new_uuid, now
 
 EXPORT_FORMATS = {"csv", "json", "xlsx", "markdown"}
 MEDIA_TYPES = {
@@ -48,7 +46,7 @@ class StructuredExtractionExportService:
         fields = self._schema_fields(task_id, run["schema_version"], user=user)
         if not rows:
             raise ValueError("export_records_required")
-        export_id = self._next_export_id(task_id)
+        export_id = new_uuid()
         ts = now()
         settings = {
             "include_rejected": payload.include_rejected,
@@ -175,18 +173,6 @@ class StructuredExtractionExportService:
 
     def _schema_fields(self, task_id: str, schema_version: str, *, user: UserContext) -> list[dict[str, Any]]:
         return self.review._schema_fields(task_id, schema_version, user=user)  # noqa: SLF001
-
-    def _next_export_id(self, task_id: str) -> str:
-        rows = self.store.conn.execute(
-            "select export_id from structured_extraction_exports where task_id = ?",
-            (task_id,),
-        ).fetchall()
-        max_num = 0
-        for row in rows:
-            match = re.match(r"^exp_v(\d+)$", row["export_id"] or "")
-            if match:
-                max_num = max(max_num, int(match.group(1)))
-        return f"exp_v{max_num + 1}"
 
     def _mark_exported(self, task_id: str, *, user: UserContext) -> None:
         task = self.store.get_task(task_id, user_id=user.user_id)

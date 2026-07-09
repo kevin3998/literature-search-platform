@@ -4,11 +4,13 @@ import json
 import time
 
 from test_structured_extraction_review import _client_with_completed_run
+from test_structured_extraction_runs import _run_structured_worker_once
 
 
 def _wait_for_mm_job(client, task_id: str, job_id: str, *, timeout: float = 5.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _run_structured_worker_once()
         response = client.get(
             f"/api/structured-extraction/tasks/{task_id}/review/multimodal-jobs/{job_id}",
             headers={"X-User-Id": "alice"},
@@ -103,7 +105,7 @@ def test_multimodal_review_job_suggestions_summary_accept_and_artifacts(monkeypa
     assert events[-1]["payload"]["provenance"]["job_id"] == job["job_id"]
 
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    audit = root / "users" / "alice" / task["workspace_rel_path"] / "audit"
+    audit = root / "users" / task["user_id"] / task["workspace_rel_path"] / "audit"
     assert (audit / f"multimodal_jobs_{run_id}.jsonl").exists()
     assert (audit / f"multimodal_suggestions_{run_id}.jsonl").exists()
     assert (audit / f"review_summary_{run_id}.json").exists()
@@ -148,8 +150,9 @@ def test_multimodal_review_reject_bulk_and_export_provenance(monkeypatch, tmp_pa
         headers={"X-User-Id": "alice"},
     )
     assert created.status_code == 200
+    export_id = created.json()["export_id"]
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    manifest_path = root / "users" / "alice" / task["workspace_rel_path"] / "exports" / "exp_v1" / "export_exp_v1_manifest.json"
+    manifest_path = root / "users" / task["user_id"] / task["workspace_rel_path"] / "exports" / export_id / f"export_{export_id}_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert "multimodal_provenance" in manifest
     assert manifest["multimodal_provenance"]["job_count"] >= 1

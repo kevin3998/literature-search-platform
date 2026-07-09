@@ -33,7 +33,13 @@ def migrated_postgres_schema():
         conn.execute(text(f'create schema "{schema}"'))
     try:
         previous_schema = os.environ.get("DB_SCHEMA")
+        previous_database_url = os.environ.get("DATABASE_URL")
+        previous_auth_mode = os.environ.get("AUTH_MODE")
+        previous_app_env = os.environ.get("APP_ENV")
         os.environ["DB_SCHEMA"] = schema
+        os.environ["DATABASE_URL"] = url
+        os.environ["AUTH_MODE"] = "dev-header"
+        os.environ["APP_ENV"] = "development"
         command.upgrade(alembic_config(url, schema), "head")
         yield url, schema
     finally:
@@ -41,6 +47,18 @@ def migrated_postgres_schema():
             os.environ.pop("DB_SCHEMA", None)
         else:
             os.environ["DB_SCHEMA"] = previous_schema
+        if previous_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_database_url
+        if previous_auth_mode is None:
+            os.environ.pop("AUTH_MODE", None)
+        else:
+            os.environ["AUTH_MODE"] = previous_auth_mode
+        if previous_app_env is None:
+            os.environ.pop("APP_ENV", None)
+        else:
+            os.environ["APP_ENV"] = previous_app_env
         with admin_engine.begin() as conn:
             conn.execute(text(f'drop schema if exists "{schema}" cascade'))
         admin_engine.dispose()

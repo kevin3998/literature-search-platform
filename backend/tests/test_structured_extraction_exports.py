@@ -57,7 +57,7 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
     )
     assert created.status_code == 200
     body = created.json()
-    assert body["export_id"] == "exp_v1"
+    export_id = body["export_id"]
     assert body["formats"] == ["csv", "json", "xlsx", "markdown"]
     assert body["record_count"] == 1
     assert body["field_count"] == 2
@@ -65,17 +65,17 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
     assert task["status"] == "exported"
     assert task["stats"]["export_count"] == 1
-    export_dir = root / "users" / "alice" / task["workspace_rel_path"] / "exports" / "exp_v1"
-    manifest_path = export_dir / "export_exp_v1_manifest.json"
-    json_path = export_dir / "records_exp_v1.json"
-    csv_path = export_dir / "records_exp_v1.csv"
-    xlsx_path = export_dir / "records_exp_v1.xlsx"
-    md_path = export_dir / "records_exp_v1.md"
+    export_dir = root / "users" / task["user_id"] / task["workspace_rel_path"] / "exports" / export_id
+    manifest_path = export_dir / f"export_{export_id}_manifest.json"
+    json_path = export_dir / f"records_{export_id}.json"
+    csv_path = export_dir / f"records_{export_id}.csv"
+    xlsx_path = export_dir / f"records_{export_id}.xlsx"
+    md_path = export_dir / f"records_{export_id}.md"
     for path in [manifest_path, json_path, csv_path, xlsx_path, md_path]:
         assert path.exists(), path
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["export_id"] == "exp_v1"
+    assert manifest["export_id"] == export_id
     assert manifest["run_id"] == run_id
 
     exported_json = json.loads(json_path.read_text(encoding="utf-8"))
@@ -96,11 +96,11 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
     assert "xl/worksheets/sheet3.xml" in names
 
     markdown = md_path.read_text(encoding="utf-8")
-    assert "# 结构化抽取导出 exp_v1" in markdown
+    assert f"# 结构化抽取导出 {export_id}" in markdown
     assert "Antifouling membrane performance" in markdown
 
     downloaded_csv = client.get(
-        f"/api/structured-extraction/tasks/{task_id}/exports/exp_v1/download?format=csv",
+        f"/api/structured-extraction/tasks/{task_id}/exports/{export_id}/download?format=csv",
         headers={"X-User-Id": "alice"},
     )
     assert downloaded_csv.status_code == 200
@@ -108,7 +108,7 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
     assert "water_flux.normalized" in downloaded_csv.text
 
     downloaded_xlsx = client.get(
-        f"/api/structured-extraction/tasks/{task_id}/exports/exp_v1/download?format=xlsx",
+        f"/api/structured-extraction/tasks/{task_id}/exports/{export_id}/download?format=xlsx",
         headers={"X-User-Id": "alice"},
     )
     assert downloaded_xlsx.status_code == 200
@@ -125,10 +125,10 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
 
     listed = client.get(f"/api/structured-extraction/tasks/{task_id}/exports", headers={"X-User-Id": "alice"})
     assert listed.status_code == 200
-    assert listed.json()["exports"][0]["export_id"] == "exp_v1"
-    detail = client.get(f"/api/structured-extraction/tasks/{task_id}/exports/exp_v1", headers={"X-User-Id": "alice"})
+    assert listed.json()["exports"][0]["export_id"] == export_id
+    detail = client.get(f"/api/structured-extraction/tasks/{task_id}/exports/{export_id}", headers={"X-User-Id": "alice"})
     assert detail.status_code == 200
-    assert detail.json()["files"]["json"].endswith("records_exp_v1.json")
+    assert detail.json()["files"]["json"].endswith(f"records_{export_id}.json")
 
     bob = client.get(f"/api/structured-extraction/tasks/{task_id}/exports", headers={"X-User-Id": "bob"})
     assert bob.status_code == 404

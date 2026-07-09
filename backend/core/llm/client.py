@@ -1,10 +1,9 @@
 """Provider-agnostic streaming chat client with tool/function calling.
 
-Milestone 1 only wires `openai` and `openai_compatible` (same SDK, different
-`base_url`). Configuration (provider / model / base_url / temperature / ...) is
-read from `settings_store`; the API key is read only from environment variables
-via `settings_store.SECRET_ENV_BY_PROVIDER`. Runtime precedence stays consistent
-with the rest of the platform: explicit payload > sqlite settings > env > default.
+Configuration (provider / model / base_url / temperature / ...) is read from the
+current user's PostgreSQL-backed settings/profile stores. API key resolution
+keeps environment variables first, then the active user profile, then the user's
+stored provider secret.
 
 The client exposes a single coroutine `stream_chat(messages, tools)` returning an
 async iterator of deltas. Each delta is one of:
@@ -146,23 +145,23 @@ def _safe_json(raw: str | None) -> dict[str, Any]:
         return {}
 
 
-def build_llm_client(settings_store, *, strong: bool = False) -> LLMClient:
+def build_llm_client(settings_store, *, strong: bool = False, user_id: str | None = None) -> LLMClient:
     """Construct an :class:`LLMClient` from current settings.
 
     Raises :class:`LLMUnavailable` when the configuration cannot produce a usable
     client (provider ``none``, missing key, unsupported provider, ...).
     """
-    if not settings_store.llm_enabled():
+    if not settings_store.llm_enabled(user_id=user_id):
         raise LLMUnavailable("LLM is not enabled (provider=none, agent disabled, or missing API key)")
 
-    config = settings_store.model_config()
+    config = settings_store.model_config(user_id=user_id)
     provider = config["provider"]
     model = config["strong_model"] if strong and config.get("strong_model") else config["chat_model"]
     if not model:
         raise LLMUnavailable("no chat model configured (Settings → Models → chat_model)")
 
     if provider in {"openai", "openai_compatible", "deepseek", "ollama"}:
-        api_key = _resolve_api_key(settings_store, provider)
+        api_key = _resolve_api_key(settings_store, provider, user_id=user_id)
         base_url = config.get("base_url") or _default_base_url(provider)
         return OpenAIClient(
             api_key=api_key,
@@ -177,11 +176,11 @@ def build_llm_client(settings_store, *, strong: bool = False) -> LLMClient:
     raise LLMUnavailable(f"provider '{provider}' is not supported by the agent yet")
 
 
-def resolve_api_key(provider: str) -> str | None:
+def resolve_api_key(provider: str, *, user_id: str | None = None) -> str | None:
     """Resolve a provider's API key.
 
-    Precedence: env var → active model profile's key → legacy per-provider stored
-    key → ``ollama`` dummy. Returns None when nothing is configured.
+    Precedence: env var → active model profile's key → per-provider stored key →
+    ``ollama`` dummy. Returns None when nothing is configured.
     """
     from core.secret_store import secret_store
     from core.settings_store import SECRET_ENV_BY_PROVIDER
@@ -193,13 +192,13 @@ def resolve_api_key(provider: str) -> str | None:
 
     from core.model_profiles import model_profile_store
 
-    active = model_profile_store.active()
+    active = model_profile_store.active(user_id=user_id)
     if active and active.get("provider") == provider:
-        key = model_profile_store.active_api_key()
+        key = model_profile_store.active_api_key(user_id=user_id)
         if key:
             return key
 
-    stored = secret_store.get(provider)
+    stored = secret_store.get(provider, user_id=user_id)
     if stored:
         return stored
     if provider == "ollama":
@@ -207,8 +206,8 @@ def resolve_api_key(provider: str) -> str | None:
     return None
 
 
-def _resolve_api_key(settings_store, provider: str) -> str:
-    value = resolve_api_key(provider)
+def _resolve_api_key(settings_store, provider: str, *, user_id: str | None = None) -> str:
+    value = resolve_api_key(provider, user_id=user_id)
     if value:
         return value
     raise LLMUnavailable(f"missing API key for provider '{provider}' (set env var or save it in Settings)")

@@ -9,12 +9,20 @@ completed/failed names — so the stage-mapping logic is genuinely covered.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
 import pytest
+
+if not os.getenv("TEST_DATABASE_URL"):
+    pytest.skip("TEST_DATABASE_URL is not configured; skipping PostgreSQL workflow engine tests", allow_module_level=True)
+
+os.environ.setdefault("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+os.environ.setdefault("AUTH_MODE", "dev-header")
+os.environ.setdefault("APP_ENV", "development")
 
 from modules.literature_search.job_store import JobStore
 from modules.evidence_workflow.task_profiles import DEFAULT_TASK_PROFILE_ID
@@ -25,6 +33,7 @@ from modules.workflow.runners.base import STAGE_PREFIX, RunnerContext, expected_
 from modules.workflow.runners.corpus_stage import CorpusStageRunner
 from modules.workflow.runners.research_controller import ResearchControllerRunner, _acquire_timeout_seconds
 from modules.workflow.store import WorkflowStore
+from postgres_test_utils import migrated_postgres_schema
 
 
 class ScriptedLLM:
@@ -223,7 +232,7 @@ class FakeJobRunner:
     def submit(self, job_type: str, payload: dict) -> dict:
         self.last_job_type = job_type
         self.last_payload = dict(payload)
-        job = self.store.create(job_type, payload)
+        job = self.store.create(job_type, payload, user_id=payload.get("user_id"))
         jid = job["job_id"]
         self.store.start(jid)
         run_id = payload["run_id"]
@@ -276,38 +285,46 @@ def _fake_external_search(topic, idea_text):
 
 @pytest.fixture()
 def engine():
-    # Per-test DB file so lingering daemon threads from a finished test never
-    # contend on a shared sqlite file (which would surface as a flaky 'failed').
-    db_path = Path(tempfile.gettempdir()) / f"wf_test_{uuid.uuid4().hex}.sqlite"
-    data_dir = Path(tempfile.gettempdir()) / f"wf_data_{uuid.uuid4().hex}"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    store = WorkflowStore(db_path)
-    job_store = JobStore(db_path)
-    service = FakeService(data_dir=data_dir)
-    scripted = ScriptedLLM()
-    service._scripted = scripted
-    service._screening_llm = ScriptedScreeningLLM()
-    agent_runner = AgentStepRunner(llm_factory=lambda: scripted, external_search=_fake_external_search)
-    runner = FakeJobRunner(job_store, service)
-    orch = WorkflowOrchestrator(
-        store, runner, job_store, service,
-        runners={
-            "corpus-stage": CorpusStageRunner(),
-            "agent-step": agent_runner,
-            "research-controller": ResearchControllerRunner(),
-        },
-    )
-    yield store, orch, service, job_store
-    for suffix in ("", "-wal", "-shm"):
-        try:
-            Path(str(db_path) + suffix).unlink()
-        except FileNotFoundError:
-            pass
+    with migrated_postgres_schema():
+        data_dir = Path(tempfile.gettempdir()) / f"wf_data_{uuid.uuid4().hex}"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        store = WorkflowStore()
+        job_store = JobStore()
+        service = FakeService(data_dir=data_dir)
+        scripted = ScriptedLLM()
+        service._scripted = scripted
+        service._screening_llm = ScriptedScreeningLLM()
+        agent_runner = AgentStepRunner(llm_factory=lambda: scripted, external_search=_fake_external_search)
+        runner = FakeJobRunner(job_store, service)
+        orch = WorkflowOrchestrator(
+            store, runner, job_store, service,
+            runners={
+                "corpus-stage": CorpusStageRunner(),
+                "agent-step": agent_runner,
+                "research-controller": ResearchControllerRunner(),
+            },
+        )
+        store._test_orchestrator = orch
+        yield store, orch, service, job_store
 
 
 def _wait(store, workflow_id, *, timeout=5.0):
+    from core.worker.queue import JobQueue
+    from core.worker.runtime import WorkerRuntime
+    from modules.workflow.worker_handlers import build_workflow_registry
+
     deadline = time.time() + timeout
     while time.time() < deadline:
+        orchestrator = getattr(store, "_test_orchestrator", None)
+        if orchestrator is not None:
+            runtime = WorkerRuntime(
+                JobQueue(store.engine),
+                build_workflow_registry(orchestrator=orchestrator),
+                worker_id="test-workflow-worker",
+                queues=["workflow"],
+                max_jobs_per_tick=1,
+            )
+            runtime.run_once()
         status = store.get(workflow_id)["status"]
         if status in ("completed", "partial", "failed", "paused", "blocked"):
             return status

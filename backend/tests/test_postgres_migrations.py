@@ -259,3 +259,54 @@ def test_session_hard_delete_cascades_children_but_audit_events_remain():
 
     assert message_count == 0
     assert audit_count == 1
+
+
+def test_m5_structured_async_tables_link_to_core_jobs():
+    from core.db.engine import engine_for_url
+
+    expected_tables = {
+        "structured_extraction_evidence_packet_build_jobs",
+        "structured_extraction_runs",
+        "structured_extraction_multimodal_review_jobs",
+    }
+
+    with migrated_postgres_schema() as (url, schema):
+        engine = engine_for_url(url, schema=schema)
+        try:
+            with engine.connect() as conn:
+                columns = {
+                    row["table_name"]: row["column_name"]
+                    for row in conn.execute(
+                        text(
+                            """
+                            select table_name, column_name
+                            from information_schema.columns
+                            where table_schema = :schema
+                              and table_name = any(:tables)
+                              and column_name = 'core_job_id'
+                            """
+                        ),
+                        {"schema": schema, "tables": list(expected_tables)},
+                    ).mappings()
+                }
+                fk_count = conn.execute(
+                    text(
+                        """
+                        select count(*)
+                        from pg_constraint c
+                        join pg_namespace n on n.oid = c.connamespace
+                        join pg_class t on t.oid = c.conrelid
+                        where n.nspname = :schema
+                          and t.relname = any(:tables)
+                          and c.contype = 'f'
+                          and pg_get_constraintdef(c.oid) like '%core_job_id%'
+                          and pg_get_constraintdef(c.oid) like '%jobs%'
+                        """
+                    ),
+                    {"schema": schema, "tables": list(expected_tables)},
+                ).scalar_one()
+        finally:
+            engine.dispose()
+
+    assert set(columns) == expected_tables
+    assert fk_count == 3

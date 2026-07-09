@@ -179,7 +179,7 @@ def test_schema_designer_draft_validation_freeze_and_versioning(monkeypatch, tmp
     assert draft["validation_errors"] == []
 
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    workspace = root / "users" / "alice" / task["workspace_rel_path"] / "schemas"
+    workspace = root / "users" / task["user_id"] / task["workspace_rel_path"] / "schemas"
     assert json.loads((workspace / "draft.json").read_text(encoding="utf-8"))["fields"][0]["key"] == "membrane_name"
 
     listed_draft = client.get(f"/api/structured-extraction/tasks/{task_id}/schema/draft", headers={"X-User-Id": "alice"})

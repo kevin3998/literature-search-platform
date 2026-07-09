@@ -40,6 +40,15 @@ def _fallback_reason() -> str:
     return "、".join(labels)
 
 
+def _fallback_reason_for_user(user_id: str | None) -> str:
+    try:
+        reasons = settings_store.readiness(user_id=user_id).get("reasons") or []
+    except Exception:  # noqa: BLE001 - never let diagnostics break the chat path
+        return ""
+    labels = [_FALLBACK_REASON_LABELS.get(code, code) for code in reasons]
+    return "、".join(labels)
+
+
 class LiteratureSearchModule(AgentModule):
     id = "literature_search"
     name = "文献检索分析"
@@ -56,6 +65,7 @@ class LiteratureSearchModule(AgentModule):
         options: dict,
     ) -> AsyncIterator[dict]:
         memory_context = options.get("_memory_context") or {}
+        user_id = options.get("_user_id")
         attachments_context = options.get("_attachments_context") or []
         attachment_block = _attachments_prompt_block(attachments_context)
         light_route = classify_lightweight_route(message, has_attachments=bool(attachments_context))
@@ -75,7 +85,7 @@ class LiteratureSearchModule(AgentModule):
                     "attachment_count": len(attachments_context),
                     "filenames": [item.get("filename") or "附件" for item in attachments_context],
                 }
-                async for event in self._run_attachment_only_chat(message, attachments_context):
+                async for event in self._run_attachment_only_chat(message, attachments_context, user_id=user_id):
                     yield event
                 yield {"type": "done"}
                 return
@@ -88,9 +98,9 @@ class LiteratureSearchModule(AgentModule):
                 return
             if light_route.kind == "plain_help":
                 yield {"type": "intent_route", "route": light_route.kind, "label": light_route.label}
-                if settings_store.llm_enabled():
+                if settings_store.llm_enabled(user_id=user_id):
                     try:
-                        async for event in self._run_plain_chat(message, history, attachments_context):
+                        async for event in self._run_plain_chat(message, history, attachments_context, user_id=user_id):
                             yield event
                     except LLMUnavailable:
                         yield {"type": "token", "text": _plain_help_answer(message)}
@@ -100,9 +110,9 @@ class LiteratureSearchModule(AgentModule):
                 return
             if light_route.kind == "plain_chat":
                 yield {"type": "intent_route", "route": light_route.kind, "label": light_route.label}
-                if settings_store.llm_enabled():
+                if settings_store.llm_enabled(user_id=user_id):
                     try:
-                        async for event in self._run_plain_chat(message, history, attachments_context):
+                        async for event in self._run_plain_chat(message, history, attachments_context, user_id=user_id):
                             yield event
                     except LLMUnavailable:
                         yield {"type": "token", "text": _plain_chat_answer(message)}
@@ -121,7 +131,7 @@ class LiteratureSearchModule(AgentModule):
         if not route.should_enter_research:
             yield {"type": "intent_route", "route": "plain_chat", "label": "普通对话"}
             try:
-                async for event in self._run_plain_chat(message, history, attachments_context):
+                async for event in self._run_plain_chat(message, history, attachments_context, user_id=user_id):
                     yield event
             except LLMUnavailable as exc:
                 yield {"type": "error", "message": f"普通对话模型不可用：{exc}"}
@@ -134,9 +144,9 @@ class LiteratureSearchModule(AgentModule):
 
         # Research QA is LLM-assisted by design. If the model/agent is unavailable,
         # block with a readable diagnostic instead of fabricating a local summary.
-        if not REAL_AGENT_AVAILABLE or real_adapter is None or not settings_store.llm_enabled():
+        if not REAL_AGENT_AVAILABLE or real_adapter is None or not settings_store.llm_enabled(user_id=user_id):
             message_text = failure_message("llm_required_for_research")
-            reason = _fallback_reason()
+            reason = _fallback_reason_for_user(user_id)
             if reason:
                 message_text = f"{message_text}\n\n当前阻塞原因：{reason}。"
             yield {"type": "failure_explanation", "code": "llm_required_for_research", "message": message_text}
@@ -172,7 +182,8 @@ class LiteratureSearchModule(AgentModule):
         # ToolRegistry persists search results itself; tell chat_router not to
         # record the forwarded `papers` events a second time.
         options["_agent_records_search"] = True
-        agent_cfg = settings_store.agent_config()
+        user_id = options.get("_user_id")
+        agent_cfg = settings_store.agent_config(user_id=user_id)
         # Block 6c: a specialist role (explicit capability button) gates the tool
         # set + prepends a role prompt + can force deep tools. The general role
         # (free-form chat) leaves the pre-6c behaviour untouched.
@@ -184,7 +195,7 @@ class LiteratureSearchModule(AgentModule):
         answer_mode = requested_mode if requested_mode in {"quick", "deep"} else agent_cfg["answer_mode"]
         if role.mode in {"quick", "deep"}:
             answer_mode = role.mode
-        llm = build_llm_client(settings_store)
+        llm = build_llm_client(settings_store, user_id=user_id)
         registry = ToolRegistry(
             real_adapter.service,
             session_store,
@@ -194,6 +205,7 @@ class LiteratureSearchModule(AgentModule):
             has_history=bool(history),
             role_tools=role.tools,
             original_question=message,
+            user_id=user_id,
         )
         loop = AgentLoop(
             llm,
@@ -213,8 +225,10 @@ class LiteratureSearchModule(AgentModule):
         message: str,
         history: list[ChatMessage],
         attachments_context: list[dict] | None = None,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[dict]:
-        llm = build_llm_client(settings_store)
+        llm = build_llm_client(settings_store, user_id=user_id)
         messages = [
             {
                 "role": "system",
@@ -243,10 +257,12 @@ class LiteratureSearchModule(AgentModule):
         self,
         message: str,
         attachments_context: list[dict],
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[dict]:
         attachment_block = _attachments_prompt_block(attachments_context)
         try:
-            llm = build_llm_client(settings_store)
+            llm = build_llm_client(settings_store, user_id=user_id)
         except LLMUnavailable:
             yield {"type": "token", "text": "附件已解析，但当前模型不可用，无法生成总结。"}
             return

@@ -1,13 +1,32 @@
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import os
 from urllib.parse import quote
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+if not os.getenv("TEST_DATABASE_URL"):
+    pytest.skip("TEST_DATABASE_URL is not configured; skipping workflow router PostgreSQL tests", allow_module_level=True)
+
+os.environ.setdefault("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+os.environ.setdefault("AUTH_MODE", "dev-header")
+os.environ.setdefault("APP_ENV", "development")
+
 from api import workflow_router
+from core.user_context import UserContext
+
+TEST_USER_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _client() -> TestClient:
     app = FastAPI()
     app.include_router(workflow_router.router)
+    app.dependency_overrides[workflow_router.current_user] = lambda: UserContext(
+        user_id=TEST_USER_ID,
+        subject="router-test",
+        display_name="Router Test",
+        workspace_slug="router-test",
+    )
     return TestClient(app)
 
 
@@ -25,6 +44,7 @@ class FakeWorkflowStore:
         session_id=None,
         task_profile_id=None,
         scope_options=None,
+        user_id=None,
     ):
         self.created_payload = {
             "template_id": template_id,
@@ -34,9 +54,11 @@ class FakeWorkflowStore:
             "session_id": session_id,
             "task_profile_id": task_profile_id,
             "scope_options": scope_options,
+            "user_id": user_id,
         }
         return {
             "workflow_id": "wf_router",
+            "user_id": user_id,
             "template_id": template_id,
             "topic": topic,
             "scope": scope,
@@ -78,6 +100,7 @@ def test_create_workflow_accepts_task_profile_and_scope_options(monkeypatch) -> 
         "session_id": None,
         "task_profile_id": "topic-to-report",
         "scope_options": {"year_from": 2020, "limit": 30},
+        "user_id": TEST_USER_ID,
     }
     assert response.json()["task_profile_id"] == "topic-to-report"
 
@@ -129,8 +152,8 @@ def test_artifact_preview_endpoint_checks_owner_and_returns_preview(monkeypatch)
             return {"workflow_id": workflow_id, "user_id": user_id}
 
     class Orchestrator:
-        def artifact_preview(self, workflow_id, artifact_id):
-            calls.append(("preview", workflow_id, artifact_id))
+        def artifact_preview(self, workflow_id, artifact_id, *, user_id=None):
+            calls.append(("preview", workflow_id, artifact_id, user_id))
             return {
                 "workflow_id": workflow_id,
                 "artifact_id": artifact_id,
@@ -150,8 +173,7 @@ def test_artifact_preview_endpoint_checks_owner_and_returns_preview(monkeypatch)
     assert response.status_code == 200
     assert response.json()["artifact_id"] == artifact_id
     assert calls == [
-        ("get", "wf_1", "alice"),
-        ("preview", "wf_1", artifact_id),
+        ("preview", "wf_1", artifact_id, TEST_USER_ID),
     ]
 
 
@@ -161,7 +183,7 @@ def test_artifact_preview_endpoint_returns_404_for_unknown_artifact(monkeypatch)
             return {"workflow_id": workflow_id, "user_id": user_id}
 
     class Orchestrator:
-        def artifact_preview(self, workflow_id, artifact_id):
+        def artifact_preview(self, workflow_id, artifact_id, *, user_id=None):
             raise KeyError("artifact not found")
 
     monkeypatch.setattr(workflow_router, "workflow_store", Store())
@@ -182,8 +204,8 @@ def test_insights_endpoint_checks_owner_and_returns_summary(monkeypatch) -> None
             return {"workflow_id": workflow_id, "user_id": user_id}
 
     class Orchestrator:
-        def workflow_insights(self, workflow_id):
-            calls.append(("insights", workflow_id))
+        def workflow_insights(self, workflow_id, *, user_id=None):
+            calls.append(("insights", workflow_id, user_id))
             return {
                 "workflow_id": workflow_id,
                 "evidence": {"available": False, "card_count": 0, "selected_count": 0, "role_counts": {}, "support_counts": {}, "cards": []},
@@ -198,6 +220,5 @@ def test_insights_endpoint_checks_owner_and_returns_summary(monkeypatch) -> None
     assert response.status_code == 200
     assert response.json()["workflow_id"] == "wf_1"
     assert calls == [
-        ("get", "wf_1", "alice"),
-        ("insights", "wf_1"),
+        ("insights", "wf_1", TEST_USER_ID),
     ]

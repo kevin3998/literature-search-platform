@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { clearApiUserId, sessionApi, setApiUserId, settingsApi, streamChat, streamWorkflow, structuredExtractionApi, workflowApi } from "../src/api/client.js";
 import { applySchemaPreset, schemaConflictMessages } from "../src/components/structured-extraction/schemaPresets.js";
@@ -10,6 +11,17 @@ function jsonResponse(body, init = {}) {
     headers: { "Content-Type": "application/json", ...(init.headers || {}) },
   });
 }
+
+test("settings model profiles keep actions visible and offer supported DeepSeek models", async () => {
+  const source = await readFile(new URL("../src/components/SettingsModal.jsx", import.meta.url), "utf8");
+
+  assert.ok(source.includes("const DEEPSEEK_MODELS = ["));
+  assert.match(source, /deepseek-chat/);
+  assert.match(source, /deepseek-reasoner/);
+  assert.ok(source.includes("deepseek-model-options"));
+  assert.match(source, /data-testid=\"model-profile-actions\"/);
+  assert.ok(!source.includes('<table className="w-full text-[13px]">'));
+});
 
 test("sessionApi normalizes backend snake_case sessions into frontend camelCase models", async () => {
   let requestedUrl = null;
@@ -356,12 +368,12 @@ test("structuredExtractionApi lists and normalizes task contracts", async () => 
     return jsonResponse({
       tasks: [
         {
-          task_id: "ext_abc",
+          task_id: "11111111-1111-4111-8111-111111111111",
           user_id: "alice",
           name: "Data extraction",
           description: "",
           status: "draft",
-          workspace_rel_path: "research_agent/structured_extraction/tasks/ext_abc",
+          workspace_rel_path: "research_agent/structured_extraction/tasks/11111111-1111-4111-8111-111111111111",
           current_collection_version: null,
           current_schema_version: null,
           model_settings: {},
@@ -383,12 +395,12 @@ test("structuredExtractionApi lists and normalizes task contracts", async () => 
   assert.equal(requestedUrl, "/api/structured-extraction/tasks?include_archived=false&limit=100");
   assert.equal(requestHeaders["X-User-Id"], "alice");
   assert.deepEqual(tasks[0], {
-    taskId: "ext_abc",
+    taskId: "11111111-1111-4111-8111-111111111111",
     userId: "alice",
     name: "Data extraction",
     description: "",
     status: "draft",
-    workspaceRelPath: "research_agent/structured_extraction/tasks/ext_abc",
+    workspaceRelPath: "research_agent/structured_extraction/tasks/11111111-1111-4111-8111-111111111111",
     currentCollectionVersion: null,
     currentSchemaVersion: null,
     modelSettings: {},
@@ -420,8 +432,8 @@ test("structuredExtractionApi collection search sends contract and normalizes ca
       total_candidates: 1,
       candidates: [
         {
-          candidate_id: "cand_1",
-          task_id: "ext_1",
+          candidate_id: "33333333-3333-4333-8333-333333333333",
+          task_id: "22222222-2222-4222-8222-222222222222",
           paper_id: "p1",
           title: "Membrane paper",
           authors: ["Alice"],
@@ -447,17 +459,17 @@ test("structuredExtractionApi collection search sends contract and normalizes ca
   };
 
   setApiUserId("alice");
-  const result = await structuredExtractionApi.searchCollection("ext_1", { query: "membrane", limit: 50 });
+  const result = await structuredExtractionApi.searchCollection("22222222-2222-4222-8222-222222222222", { query: "membrane", limit: 50 });
   clearApiUserId();
 
-  assert.equal(requestedUrl, "/api/structured-extraction/tasks/ext_1/collection/search");
+  assert.equal(requestedUrl, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/collection/search");
   assert.deepEqual(requestBody, { query: "membrane", limit: 50 });
   assert.equal(requestHeaders["X-User-Id"], "alice");
   assert.equal(result.created, 1);
   assert.equal(result.totalCandidates, 1);
   assert.deepEqual(result.candidates[0], {
-    candidateId: "cand_1",
-    taskId: "ext_1",
+    candidateId: "33333333-3333-4333-8333-333333333333",
+    taskId: "22222222-2222-4222-8222-222222222222",
     paperId: "p1",
     title: "Membrane paper",
     authors: ["Alice"],
@@ -491,7 +503,7 @@ test("structuredExtractionApi collection search preserves unlimited limit contra
     return jsonResponse({ created: 0, total_candidates: 0, candidates: [] });
   };
 
-  await structuredExtractionApi.searchCollection("ext_1", { query: "membrane", limit: null });
+  await structuredExtractionApi.searchCollection("22222222-2222-4222-8222-222222222222", { query: "membrane", limit: null });
 
   assert.deepEqual(requestBody, { query: "membrane", limit: null });
 });
@@ -500,12 +512,12 @@ test("structuredExtractionApi candidate list can request unlimited rows", async 
   let requestedUrl = null;
   globalThis.fetch = async (url) => {
     requestedUrl = url;
-    return jsonResponse({ task_id: "ext_1", candidates: [], counts: {} });
+    return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", candidates: [], counts: {} });
   };
 
-  await structuredExtractionApi.listCandidates("ext_1", { limit: 0 });
+  await structuredExtractionApi.listCandidates("22222222-2222-4222-8222-222222222222", { limit: 0 });
 
-  assert.equal(requestedUrl, "/api/structured-extraction/tasks/ext_1/collection/candidates?limit=0");
+  assert.equal(requestedUrl, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/collection/candidates?limit=0");
 });
 
 test("structuredExtractionApi collection filter options sends user header and normalizes response", async () => {
@@ -515,7 +527,7 @@ test("structuredExtractionApi collection filter options sends user header and no
     requestedUrl = url;
     requestHeaders = options.headers || {};
     return jsonResponse({
-      task_id: "ext_1",
+      task_id: "22222222-2222-4222-8222-222222222222",
       available: true,
       reason: null,
       years: [2022, 2023, 2024],
@@ -525,13 +537,13 @@ test("structuredExtractionApi collection filter options sends user header and no
   };
 
   setApiUserId("alice");
-  const result = await structuredExtractionApi.getCollectionFilterOptions("ext_1");
+  const result = await structuredExtractionApi.getCollectionFilterOptions("22222222-2222-4222-8222-222222222222");
   clearApiUserId();
 
-  assert.equal(requestedUrl, "/api/structured-extraction/tasks/ext_1/collection/filter-options");
+  assert.equal(requestedUrl, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/collection/filter-options");
   assert.equal(requestHeaders["X-User-Id"], "alice");
   assert.deepEqual(result, {
-    taskId: "ext_1",
+    taskId: "22222222-2222-4222-8222-222222222222",
     available: true,
     reason: null,
     years: [2022, 2023, 2024],
@@ -543,9 +555,9 @@ test("structuredExtractionApi collection filter options sends user header and no
 test("structuredExtractionApi collection decision and freeze preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "freeze requires at least one included candidate" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.freezeCollection("ext_1"), /requires at least one included/);
+  await assert.rejects(structuredExtractionApi.freezeCollection("22222222-2222-4222-8222-222222222222"), /requires at least one included/);
   await assert.rejects(
-    structuredExtractionApi.setCandidateDecision("ext_1", "cand_1", { decision: "exclude", exclude_reason: "other" }),
+    structuredExtractionApi.setCandidateDecision("22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", { decision: "exclude", exclude_reason: "other" }),
     /requires at least one included/
   );
 });
@@ -554,10 +566,10 @@ test("structuredExtractionApi candidate decision can restore a row to candidate"
   let requestBody = null;
   globalThis.fetch = async (_url, options = {}) => {
     requestBody = JSON.parse(options.body);
-    return jsonResponse({ candidate_id: "cand_1", task_id: "ext_1", paper_id: "p1", user_decision: "candidate" });
+    return jsonResponse({ candidate_id: "33333333-3333-4333-8333-333333333333", task_id: "22222222-2222-4222-8222-222222222222", paper_id: "p1", user_decision: "candidate" });
   };
 
-  const candidate = await structuredExtractionApi.setCandidateDecision("ext_1", "cand_1", { decision: "candidate" });
+  const candidate = await structuredExtractionApi.setCandidateDecision("22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", { decision: "candidate" });
 
   assert.deepEqual(requestBody, { decision: "candidate" });
   assert.equal(candidate.userDecision, "candidate");
@@ -572,7 +584,7 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
     requestBody = JSON.parse(options.body);
     requestHeaders = options.headers || {};
     return jsonResponse({
-      task_id: "ext_1",
+      task_id: "22222222-2222-4222-8222-222222222222",
       schema_version: null,
       base_collection_version: "col_v1",
       schema_mode: "nested_material",
@@ -622,10 +634,10 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
     fields: [{ key: "membrane_name", label: "膜名称", type: "string", groupKey: "material_identity" }],
   };
   setApiUserId("alice");
-  const draft = await structuredExtractionApi.saveSchemaDraft("ext_1", payload);
+  const draft = await structuredExtractionApi.saveSchemaDraft("22222222-2222-4222-8222-222222222222", payload);
   clearApiUserId();
 
-  assert.equal(requestedUrl, "/api/structured-extraction/tasks/ext_1/schema/draft");
+  assert.equal(requestedUrl, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/schema/draft");
   assert.deepEqual(requestBody, {
     schema_mode: "nested_material",
     record_schema: { record_type: "membrane_sample", record_unit: "sample_level" },
@@ -634,7 +646,7 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
     fields: [{ key: "membrane_name", label: "膜名称", type: "string", group_key: "material_identity" }],
   });
   assert.equal(requestHeaders["X-User-Id"], "alice");
-  assert.equal(draft.taskId, "ext_1");
+  assert.equal(draft.taskId, "22222222-2222-4222-8222-222222222222");
   assert.equal(draft.schemaVersion, null);
   assert.equal(draft.baseCollectionVersion, "col_v1");
   assert.equal(draft.schemaMode, "nested_material");
@@ -651,7 +663,7 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
 test("structuredExtractionApi schema freeze preserves backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "schema_fields_required" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.freezeSchema("ext_1"), /schema_fields_required/);
+  await assert.rejects(structuredExtractionApi.freezeSchema("22222222-2222-4222-8222-222222222222"), /schema_fields_required/);
 });
 
 test("structuredExtractionApi prompt contract compile sends contract and normalizes response", async () => {
@@ -664,7 +676,7 @@ test("structuredExtractionApi prompt contract compile sends contract and normali
     requestHeaders = options.headers || {};
     return jsonResponse({
       prompt_contract_version: "pc_v1",
-      task_id: "ext_1",
+      task_id: "22222222-2222-4222-8222-222222222222",
       schema_version: "schema_v1",
       collection_version: "col_v1",
       schema_mode: "nested_material",
@@ -679,10 +691,10 @@ test("structuredExtractionApi prompt contract compile sends contract and normali
   };
 
   setApiUserId("alice");
-  const contract = await structuredExtractionApi.compilePromptContract("ext_1", { schemaVersion: "schema_v1", collectionVersion: "col_v1" });
+  const contract = await structuredExtractionApi.compilePromptContract("22222222-2222-4222-8222-222222222222", { schemaVersion: "schema_v1", collectionVersion: "col_v1" });
   clearApiUserId();
 
-  assert.equal(requestedUrl, "/api/structured-extraction/tasks/ext_1/prompt-contract/compile");
+  assert.equal(requestedUrl, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/prompt-contract/compile");
   assert.deepEqual(requestBody, { schema_version: "schema_v1", collection_version: "col_v1" });
   assert.equal(requestHeaders["X-User-Id"], "alice");
   assert.equal(contract.promptContractVersion, "pc_v1");
@@ -700,7 +712,7 @@ test("structuredExtractionApi evidence packet build normalizes versions and item
     if (url.endsWith("/build")) {
       return jsonResponse({
         packet_version: "ep_v1",
-        task_id: "ext_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
         collection_version: "col_v1",
         schema_version: "schema_v1",
         prompt_contract_version: "pc_v1",
@@ -712,11 +724,11 @@ test("structuredExtractionApi evidence packet build normalizes versions and item
       });
     }
     return jsonResponse({
-      task_id: "ext_1",
+      task_id: "22222222-2222-4222-8222-222222222222",
       packet_version: "ep_v1",
       items: [
         {
-          packet_item_id: "epi_1",
+          packet_item_id: "77777777-7777-4777-8777-777777777777",
           packet_version: "ep_v1",
           paper_id: "p1",
           field_group: "performance",
@@ -734,17 +746,17 @@ test("structuredExtractionApi evidence packet build normalizes versions and item
   };
 
   setApiUserId("alice");
-  const packet = await structuredExtractionApi.buildEvidencePacket("ext_1", { promptContractVersion: "pc_v1", maxChunksPerGroup: 2 });
-  const items = await structuredExtractionApi.listEvidencePacketItems("ext_1", "ep_v1");
+  const packet = await structuredExtractionApi.buildEvidencePacket("22222222-2222-4222-8222-222222222222", { promptContractVersion: "pc_v1", maxChunksPerGroup: 2 });
+  const items = await structuredExtractionApi.listEvidencePacketItems("22222222-2222-4222-8222-222222222222", "ep_v1");
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/evidence-packets/build");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/evidence-packets/build");
   assert.deepEqual(calls[0].body, { prompt_contract_version: "pc_v1", max_chunks_per_group: 2 });
   assert.equal(calls[0].headers["X-User-Id"], "alice");
   assert.equal(packet.packetVersion, "ep_v1");
   assert.equal(packet.promptContractVersion, "pc_v1");
   assert.equal(packet.fieldGroupCount, 2);
-  assert.equal(items.items[0].packetItemId, "epi_1");
+  assert.equal(items.items[0].packetItemId, "77777777-7777-4777-8777-777777777777");
   assert.equal(items.items[0].fieldKeys[0], "water_flux");
 });
 
@@ -754,8 +766,8 @@ test("structuredExtractionApi evidence packet build jobs send contracts and norm
     calls.push({ url, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
     if (url.endsWith("/build-jobs") && options.method === "POST") {
       return jsonResponse({
-        build_job_id: "epb_1",
-        task_id: "ext_1",
+        build_job_id: "88888888-8888-4888-8888-888888888888",
+        task_id: "22222222-2222-4222-8222-222222222222",
         status: "running",
         phase: "building_items",
         collection_version: "col_v1",
@@ -783,30 +795,30 @@ test("structuredExtractionApi evidence packet build jobs send contracts and norm
         completed_at: null,
       });
     }
-    if (url.endsWith("/build-jobs/epb_1/cancel")) {
-      return jsonResponse({ build_job_id: "epb_1", task_id: "ext_1", status: "cancelling", phase: "building_items", created_at: 1, updated_at: 4 });
+    if (url.endsWith("/build-jobs/88888888-8888-4888-8888-888888888888/cancel")) {
+      return jsonResponse({ build_job_id: "88888888-8888-4888-8888-888888888888", task_id: "22222222-2222-4222-8222-222222222222", status: "cancelling", phase: "building_items", created_at: 1, updated_at: 4 });
     }
-    if (url.endsWith("/build-jobs/epb_1")) {
-      return jsonResponse({ build_job_id: "epb_1", task_id: "ext_1", status: "completed", phase: "completed", result_packet_version: "ep_v2", created_at: 1, updated_at: 5, completed_at: 5 });
+    if (url.endsWith("/build-jobs/88888888-8888-4888-8888-888888888888")) {
+      return jsonResponse({ build_job_id: "88888888-8888-4888-8888-888888888888", task_id: "22222222-2222-4222-8222-222222222222", status: "completed", phase: "completed", result_packet_version: "ep_v2", created_at: 1, updated_at: 5, completed_at: 5 });
     }
     if (url.endsWith("/build-jobs")) {
-      return jsonResponse({ task_id: "ext_1", jobs: [{ build_job_id: "epb_1", task_id: "ext_1", status: "running", phase: "building_items", created_at: 1, updated_at: 3 }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", jobs: [{ build_job_id: "88888888-8888-4888-8888-888888888888", task_id: "22222222-2222-4222-8222-222222222222", status: "running", phase: "building_items", created_at: 1, updated_at: 3 }] });
     }
-    return jsonResponse({ task_id: "ext_1", packet_version: "ep_v2", limit: 10, offset: 20, total: 42, items: [] });
+    return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", packet_version: "ep_v2", limit: 10, offset: 20, total: 42, items: [] });
   };
 
   setApiUserId("alice");
-  const started = await structuredExtractionApi.startEvidencePacketBuildJob("ext_1", { promptContractVersion: "pc_v1", maxChunksPerGroup: 2 });
-  const listed = await structuredExtractionApi.listEvidencePacketBuildJobs("ext_1");
-  const loaded = await structuredExtractionApi.getEvidencePacketBuildJob("ext_1", "epb_1");
-  const cancelled = await structuredExtractionApi.cancelEvidencePacketBuildJob("ext_1", "epb_1");
-  const items = await structuredExtractionApi.listEvidencePacketItems("ext_1", "ep_v2", { limit: 10, offset: 20 });
+  const started = await structuredExtractionApi.startEvidencePacketBuildJob("22222222-2222-4222-8222-222222222222", { promptContractVersion: "pc_v1", maxChunksPerGroup: 2 });
+  const listed = await structuredExtractionApi.listEvidencePacketBuildJobs("22222222-2222-4222-8222-222222222222");
+  const loaded = await structuredExtractionApi.getEvidencePacketBuildJob("22222222-2222-4222-8222-222222222222", "88888888-8888-4888-8888-888888888888");
+  const cancelled = await structuredExtractionApi.cancelEvidencePacketBuildJob("22222222-2222-4222-8222-222222222222", "88888888-8888-4888-8888-888888888888");
+  const items = await structuredExtractionApi.listEvidencePacketItems("22222222-2222-4222-8222-222222222222", "ep_v2", { limit: 10, offset: 20 });
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/evidence-packets/build-jobs");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/evidence-packets/build-jobs");
   assert.deepEqual(calls[0].body, { prompt_contract_version: "pc_v1", max_chunks_per_group: 2 });
   assert.equal(calls[0].headers["X-User-Id"], "alice");
-  assert.equal(started.buildJobId, "epb_1");
+  assert.equal(started.buildJobId, "88888888-8888-4888-8888-888888888888");
   assert.equal(started.targetPacketVersion, "ep_v2");
   assert.equal(started.processedItemCount, 2);
   assert.equal(started.currentQueryMode, "article_id");
@@ -814,18 +826,18 @@ test("structuredExtractionApi evidence packet build jobs send contracts and norm
   assert.equal(started.slowItemCount, 1);
   assert.equal(started.lastItemSeconds, 4.2);
   assert.equal(started.warningsPreview[0].paperId, "p1");
-  assert.equal(listed.jobs[0].buildJobId, "epb_1");
+  assert.equal(listed.jobs[0].buildJobId, "88888888-8888-4888-8888-888888888888");
   assert.equal(loaded.resultPacketVersion, "ep_v2");
   assert.equal(cancelled.status, "cancelling");
-  assert.equal(calls[4].url, "/api/structured-extraction/tasks/ext_1/evidence-packets/versions/ep_v2/items?limit=10&offset=20");
+  assert.equal(calls[4].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/evidence-packets/versions/ep_v2/items?limit=10&offset=20");
   assert.equal(items.total, 42);
 });
 
 test("structuredExtractionApi preparation APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "prompt_contract_required" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.buildEvidencePacket("ext_1"), /prompt_contract_required/);
-  await assert.rejects(structuredExtractionApi.startEvidencePacketBuildJob("ext_1"), /prompt_contract_required/);
+  await assert.rejects(structuredExtractionApi.buildEvidencePacket("22222222-2222-4222-8222-222222222222"), /prompt_contract_required/);
+  await assert.rejects(structuredExtractionApi.startEvidencePacketBuildJob("22222222-2222-4222-8222-222222222222"), /prompt_contract_required/);
 });
 
 test("schema target presets generate material-level identity and detect conflicts", () => {
@@ -857,8 +869,8 @@ test("structuredExtractionApi extraction run APIs send contracts and normalize r
     calls.push({ url, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
     if (url.endsWith("/runs") && options.method === "POST") {
       return jsonResponse({
-        run_id: "run_1",
-        task_id: "ext_1",
+        run_id: "44444444-4444-4444-8444-444444444444",
+        task_id: "22222222-2222-4222-8222-222222222222",
         status: "queued",
         collection_version: "col_v1",
         schema_version: "schema_v1",
@@ -873,47 +885,47 @@ test("structuredExtractionApi extraction run APIs send contracts and normalize r
       });
     }
     if (url.endsWith("/runs")) {
-      return jsonResponse({ task_id: "ext_1", runs: [{ run_id: "run_1", task_id: "ext_1", status: "completed", stats: { record_count: 1 } }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", runs: [{ run_id: "44444444-4444-4444-8444-444444444444", task_id: "22222222-2222-4222-8222-222222222222", status: "completed", stats: { record_count: 1 } }] });
     }
     if (url.endsWith("/items")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
-        items: [{ run_item_id: "ri_1", packet_item_id: "epi_1", paper_id: "p1", field_group: "performance", status: "completed", error: null }],
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
+        items: [{ run_item_id: "55555555-5555-4555-8555-555555555555", packet_item_id: "77777777-7777-4777-8777-777777777777", paper_id: "p1", field_group: "performance", status: "completed", error: null }],
       });
     }
     if (url.endsWith("/records")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
-        records: [{ record_id: "rec_1", run_id: "run_1", paper_id: "p1", record_identity: { membrane_name: "PES-ZW" }, fields: { water_flux: { raw_value: "120 LMH" } }, source_packet_item_ids: ["epi_1"], quality_flags: [], created_at: 2 }],
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
+        records: [{ record_id: "66666666-6666-4666-8666-666666666666", run_id: "44444444-4444-4444-8444-444444444444", paper_id: "p1", record_identity: { membrane_name: "PES-ZW" }, fields: { water_flux: { raw_value: "120 LMH" } }, source_packet_item_ids: ["77777777-7777-4777-8777-777777777777"], quality_flags: [], created_at: 2 }],
       });
     }
     if (url.endsWith("/cancel")) {
-      return jsonResponse({ run_id: "run_1", task_id: "ext_1", status: "cancelling", stats: {} });
+      return jsonResponse({ run_id: "44444444-4444-4444-8444-444444444444", task_id: "22222222-2222-4222-8222-222222222222", status: "cancelling", stats: {} });
     }
-    return jsonResponse({ run_id: "run_1", task_id: "ext_1", status: "completed", model_snapshot: { provider: "fake" }, stats: { record_count: 1 } });
+    return jsonResponse({ run_id: "44444444-4444-4444-8444-444444444444", task_id: "22222222-2222-4222-8222-222222222222", status: "completed", model_snapshot: { provider: "fake" }, stats: { record_count: 1 } });
   };
 
   setApiUserId("alice");
-  const run = await structuredExtractionApi.startExtractionRun("ext_1", { packetVersion: "ep_v1" });
-  const runs = await structuredExtractionApi.listExtractionRuns("ext_1");
-  const detail = await structuredExtractionApi.getExtractionRun("ext_1", "run_1");
-  const items = await structuredExtractionApi.listExtractionRunItems("ext_1", "run_1");
-  const records = await structuredExtractionApi.listExtractionRunRecords("ext_1", "run_1");
-  const cancelled = await structuredExtractionApi.cancelExtractionRun("ext_1", "run_1");
+  const run = await structuredExtractionApi.startExtractionRun("22222222-2222-4222-8222-222222222222", { packetVersion: "ep_v1" });
+  const runs = await structuredExtractionApi.listExtractionRuns("22222222-2222-4222-8222-222222222222");
+  const detail = await structuredExtractionApi.getExtractionRun("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const items = await structuredExtractionApi.listExtractionRunItems("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const records = await structuredExtractionApi.listExtractionRunRecords("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const cancelled = await structuredExtractionApi.cancelExtractionRun("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/runs");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/runs");
   assert.deepEqual(calls[0].body, { packet_version: "ep_v1" });
   assert.equal(calls[0].headers["X-User-Id"], "alice");
-  assert.equal(run.runId, "run_1");
+  assert.equal(run.runId, "44444444-4444-4444-8444-444444444444");
   assert.equal(run.packetVersion, "ep_v1");
   assert.equal(run.modelSnapshot.strong, true);
   assert.equal(run.stats.packetItemCount, 2);
   assert.equal(runs.runs[0].recordCount ?? runs.runs[0].stats.recordCount, 1);
   assert.equal(detail.status, "completed");
-  assert.equal(items.items[0].runItemId, "ri_1");
+  assert.equal(items.items[0].runItemId, "55555555-5555-4555-8555-555555555555");
   assert.equal(items.items[0].fieldGroup, "performance");
   assert.equal(records.records[0].recordIdentity.membraneName, "PES-ZW");
   assert.equal(records.records[0].fields.waterFlux.rawValue, "120 LMH");
@@ -923,7 +935,7 @@ test("structuredExtractionApi extraction run APIs send contracts and normalize r
 test("structuredExtractionApi extraction run APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "evidence_packet_not_found" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.startExtractionRun("ext_1", { packetVersion: "missing" }), /evidence_packet_not_found/);
+  await assert.rejects(structuredExtractionApi.startExtractionRun("22222222-2222-4222-8222-222222222222", { packetVersion: "missing" }), /evidence_packet_not_found/);
 });
 
 test("structuredExtractionApi run recovery APIs send contracts and normalize responses", async () => {
@@ -932,8 +944,8 @@ test("structuredExtractionApi run recovery APIs send contracts and normalize res
     calls.push({ url, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
     if (url.endsWith("/recovery")) {
       return jsonResponse({
-        run_id: "run_1",
-        task_id: "ext_1",
+        run_id: "44444444-4444-4444-8444-444444444444",
+        task_id: "22222222-2222-4222-8222-222222222222",
         resumable: true,
         status: "interrupted",
         completed_item_count: 2,
@@ -947,8 +959,8 @@ test("structuredExtractionApi run recovery APIs send contracts and normalize res
       });
     }
     return jsonResponse({
-      run_id: "run_1",
-      task_id: "ext_1",
+      run_id: "44444444-4444-4444-8444-444444444444",
+      task_id: "22222222-2222-4222-8222-222222222222",
       status: "queued",
       resume_count: 1,
       recovery: { reason: "manual_resume" },
@@ -957,27 +969,27 @@ test("structuredExtractionApi run recovery APIs send contracts and normalize res
   };
 
   setApiUserId("alice");
-  const recovery = await structuredExtractionApi.getExtractionRunRecovery("ext_1", "run_1");
-  const resumed = await structuredExtractionApi.resumeExtractionRun("ext_1", "run_1", { retryFailedItems: true, reason: "manual_resume" });
+  const recovery = await structuredExtractionApi.getExtractionRunRecovery("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const resumed = await structuredExtractionApi.resumeExtractionRun("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444", { retryFailedItems: true, reason: "manual_resume" });
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/runs/run_1/recovery");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/runs/44444444-4444-4444-8444-444444444444/recovery");
   assert.equal(calls[0].headers["X-User-Id"], "alice");
-  assert.equal(calls[1].url, "/api/structured-extraction/tasks/ext_1/runs/run_1/resume");
+  assert.equal(calls[1].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/runs/44444444-4444-4444-8444-444444444444/resume");
   assert.deepEqual(calls[1].body, { retry_failed_items: true, reason: "manual_resume" });
-  assert.equal(recovery.runId, "run_1");
+  assert.equal(recovery.runId, "44444444-4444-4444-8444-444444444444");
   assert.equal(recovery.resumable, true);
   assert.equal(recovery.interruptedItemCount, 1);
   assert.equal(recovery.remainingItemCount, 2);
   assert.equal(recovery.lastError.reason, "process_restarted");
-  assert.equal(resumed.runId, "run_1");
+  assert.equal(resumed.runId, "44444444-4444-4444-8444-444444444444");
   assert.equal(resumed.resumeCount, 1);
 });
 
 test("structuredExtractionApi run recovery APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "run_locked_by_review_or_export" }, { status: 409 });
 
-  await assert.rejects(structuredExtractionApi.resumeExtractionRun("ext_1", "run_1"), /run_locked_by_review_or_export/);
+  await assert.rejects(structuredExtractionApi.resumeExtractionRun("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444"), /run_locked_by_review_or_export/);
 });
 
 test("structuredExtractionApi review APIs send contracts and normalize responses", async () => {
@@ -985,20 +997,20 @@ test("structuredExtractionApi review APIs send contracts and normalize responses
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
     if (url.endsWith("/review/runs")) {
-      return jsonResponse({ task_id: "ext_1", runs: [{ run_id: "run_1", status: "completed", stats: { record_count: 1 } }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", runs: [{ run_id: "44444444-4444-4444-8444-444444444444", status: "completed", stats: { record_count: 1 } }] });
     }
     if (url.includes("/review/table")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         total: 1,
         limit: 100,
         offset: 0,
         field_keys: ["water_flux"],
         rows: [
           {
-            record_id: "rec_1",
-            run_id: "run_1",
+            record_id: "66666666-6666-4666-8666-666666666666",
+            run_id: "44444444-4444-4444-8444-444444444444",
             paper_id: "p1",
             paper: { title: "Paper", year: 2024 },
             record_identity: { membrane_name: "PES-ZW" },
@@ -1023,35 +1035,35 @@ test("structuredExtractionApi review APIs send contracts and normalize responses
       });
     }
     if (url.endsWith("/events") && options.method !== "POST") {
-      return jsonResponse({ task_id: "ext_1", record_id: "rec_1", events: [{ event_id: 2, event_type: "edit_field", field_key: "water_flux", new_value: { raw_value: "121 LMH" } }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", record_id: "66666666-6666-4666-8666-666666666666", events: [{ event_id: 2, event_type: "edit_field", field_key: "water_flux", new_value: { raw_value: "121 LMH" } }] });
     }
     if (url.endsWith("/bulk")) {
-      return jsonResponse({ task_id: "ext_1", updated: 1, rows: [] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", updated: 1, rows: [] });
     }
     if (url.endsWith("/revert")) {
-      return jsonResponse({ record_id: "rec_1", fields: { water_flux: { status: "accepted" } } });
+      return jsonResponse({ record_id: "66666666-6666-4666-8666-666666666666", fields: { water_flux: { status: "accepted" } } });
     }
-    return jsonResponse({ record_id: "rec_1", fields: { water_flux: { field_key: "water_flux", status: "edited", effective_value: { raw_value: "121 LMH" } } } });
+    return jsonResponse({ record_id: "66666666-6666-4666-8666-666666666666", fields: { water_flux: { field_key: "water_flux", status: "edited", effective_value: { raw_value: "121 LMH" } } } });
   };
 
   setApiUserId("alice");
-  const runs = await structuredExtractionApi.listReviewRuns("ext_1");
-  const table = await structuredExtractionApi.listReviewTable("ext_1", { runId: "run_1", fieldKey: "water_flux", missing: true });
-  const detail = await structuredExtractionApi.getReviewRecord("ext_1", "rec_1", "run_1");
-  const events = await structuredExtractionApi.listReviewEvents("ext_1", "rec_1");
-  const edited = await structuredExtractionApi.editReviewField("ext_1", "rec_1", "water_flux", { value: { rawValue: "121 LMH" }, reason: "fix", locked: true });
-  await structuredExtractionApi.acceptReviewField("ext_1", "rec_1", "water_flux", { reason: "ok" });
-  await structuredExtractionApi.rejectReviewField("ext_1", "rec_1", "water_flux", { reason: "bad" });
-  await structuredExtractionApi.lockReviewField("ext_1", "rec_1", "water_flux", { reason: "manual" });
-  await structuredExtractionApi.unlockReviewField("ext_1", "rec_1", "water_flux", { reason: "manual" });
-  await structuredExtractionApi.revertReviewEvent("ext_1", 2);
-  await structuredExtractionApi.bulkReviewAction("ext_1", { items: [{ recordId: "rec_1", fieldKey: "water_flux" }], action: "accept_field", reason: "batch" });
+  const runs = await structuredExtractionApi.listReviewRuns("22222222-2222-4222-8222-222222222222");
+  const table = await structuredExtractionApi.listReviewTable("22222222-2222-4222-8222-222222222222", { runId: "44444444-4444-4444-8444-444444444444", fieldKey: "water_flux", missing: true });
+  const detail = await structuredExtractionApi.getReviewRecord("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "44444444-4444-4444-8444-444444444444");
+  const events = await structuredExtractionApi.listReviewEvents("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666");
+  const edited = await structuredExtractionApi.editReviewField("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "water_flux", { value: { rawValue: "121 LMH" }, reason: "fix", locked: true });
+  await structuredExtractionApi.acceptReviewField("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "water_flux", { reason: "ok" });
+  await structuredExtractionApi.rejectReviewField("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "water_flux", { reason: "bad" });
+  await structuredExtractionApi.lockReviewField("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "water_flux", { reason: "manual" });
+  await structuredExtractionApi.unlockReviewField("22222222-2222-4222-8222-222222222222", "66666666-6666-4666-8666-666666666666", "water_flux", { reason: "manual" });
+  await structuredExtractionApi.revertReviewEvent("22222222-2222-4222-8222-222222222222", 2);
+  await structuredExtractionApi.bulkReviewAction("22222222-2222-4222-8222-222222222222", { items: [{ recordId: "66666666-6666-4666-8666-666666666666", fieldKey: "water_flux" }], action: "accept_field", reason: "batch" });
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/review/runs");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/review/runs");
   assert.equal(calls[0].headers["X-User-Id"], "alice");
-  assert.equal(calls[1].url, "/api/structured-extraction/tasks/ext_1/review/table?run_id=run_1&field_key=water_flux&missing=true");
-  assert.equal(runs.runs[0].runId, "run_1");
+  assert.equal(calls[1].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/review/table?run_id=44444444-4444-4444-8444-444444444444&field_key=water_flux&missing=true");
+  assert.equal(runs.runs[0].runId, "44444444-4444-4444-8444-444444444444");
   assert.equal(table.rows[0].recordIdentity.membraneName, "PES-ZW");
   assert.equal(table.rows[0].data.composition.basePolymers[0].name, "PES");
   assert.equal(table.rows[0].fields.waterFlux.effectiveValue.rawValue, "121 LMH");
@@ -1059,13 +1071,13 @@ test("structuredExtractionApi review APIs send contracts and normalize responses
   assert.equal(events.events[0].eventId, 2);
   assert.deepEqual(calls[4].body, { value: { raw_value: "121 LMH" }, reason: "fix", locked: true });
   assert.equal(edited.fields.waterFlux.effectiveValue.rawValue, "121 LMH");
-  assert.deepEqual(calls[10].body, { items: [{ record_id: "rec_1", field_key: "water_flux" }], action: "accept_field", reason: "batch" });
+  assert.deepEqual(calls[10].body, { items: [{ record_id: "66666666-6666-4666-8666-666666666666", field_key: "water_flux" }], action: "accept_field", reason: "batch" });
 });
 
 test("structuredExtractionApi review APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "review_run_required" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.listReviewTable("ext_1"), /review_run_required/);
+  await assert.rejects(structuredExtractionApi.listReviewTable("22222222-2222-4222-8222-222222222222"), /review_run_required/);
 });
 
 test("structuredExtractionApi multimodal review APIs send contracts and normalize responses", async () => {
@@ -1074,8 +1086,8 @@ test("structuredExtractionApi multimodal review APIs send contracts and normaliz
     calls.push({ url, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
     if (url.includes("/review/summary")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         record_count: 2,
         risk_counts: { low: 1, high: 1 },
         coverage_counts: { reported: 3, not_reported: 2 },
@@ -1086,114 +1098,114 @@ test("structuredExtractionApi multimodal review APIs send contracts and normaliz
     }
     if (url.includes("/review/queue")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         queue: "multimodal_pending",
         total: 1,
         rows: [
           {
-            record_id: "rec_1",
-            run_id: "run_1",
+            record_id: "66666666-6666-4666-8666-666666666666",
+            run_id: "44444444-4444-4444-8444-444444444444",
             paper_id: "p1",
             record_identity: { material_name: "PES-ZW" },
             risk_level: "medium",
             coverage: { performance: "reported" },
             issues: [],
-            suggestions: [{ suggestion_id: "mms_1", field_key: "performance", action: "suggest_edit", status: "pending", provenance: { source: "multimodal" } }],
+            suggestions: [{ suggestion_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", field_key: "performance", action: "suggest_edit", status: "pending", provenance: { source: "multimodal" } }],
           },
         ],
       });
     }
     if (url.endsWith("/multimodal-jobs") && options.method === "POST") {
       return jsonResponse({
-        job_id: "mmr_1",
-        task_id: "ext_1",
-        run_id: "run_1",
+        job_id: "99999999-9999-4999-8999-999999999999",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         status: "running",
         scan_mode: "related_pages_assets",
         processed_item_count: 1,
         total_item_count: 3,
         suggestion_count: 1,
         issue_count: 0,
-        suggestions_preview: [{ suggestion_id: "mms_1", field_key: "performance" }],
+        suggestions_preview: [{ suggestion_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", field_key: "performance" }],
       });
     }
-    if (url.endsWith("/multimodal-jobs/mmr_1/cancel")) {
-      return jsonResponse({ job_id: "mmr_1", task_id: "ext_1", run_id: "run_1", status: "cancelled", scan_mode: "related_pages_assets" });
+    if (url.endsWith("/multimodal-jobs/99999999-9999-4999-8999-999999999999/cancel")) {
+      return jsonResponse({ job_id: "99999999-9999-4999-8999-999999999999", task_id: "22222222-2222-4222-8222-222222222222", run_id: "44444444-4444-4444-8444-444444444444", status: "cancelled", scan_mode: "related_pages_assets" });
     }
-    if (url.endsWith("/multimodal-jobs/mmr_1")) {
+    if (url.endsWith("/multimodal-jobs/99999999-9999-4999-8999-999999999999")) {
       return jsonResponse({
-        job_id: "mmr_1",
-        task_id: "ext_1",
-        run_id: "run_1",
+        job_id: "99999999-9999-4999-8999-999999999999",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         status: "completed",
         scan_mode: "related_pages_assets",
         processed_item_count: 3,
         total_item_count: 3,
-        suggestions: [{ suggestion_id: "mms_1", field_key: "performance", provenance: { source: "multimodal", job_id: "mmr_1" } }],
+        suggestions: [{ suggestion_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", field_key: "performance", provenance: { source: "multimodal", job_id: "99999999-9999-4999-8999-999999999999" } }],
       });
     }
     if (url.endsWith("/multimodal-jobs")) {
-      return jsonResponse({ task_id: "ext_1", run_id: "run_1", jobs: [{ job_id: "mmr_1", status: "completed", scan_mode: "related_pages_assets" }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", run_id: "44444444-4444-4444-8444-444444444444", jobs: [{ job_id: "99999999-9999-4999-8999-999999999999", status: "completed", scan_mode: "related_pages_assets" }] });
     }
-    if (url.endsWith("/suggestions/mms_1/accept")) {
+    if (url.endsWith("/suggestions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/accept")) {
       return jsonResponse({
-        suggestion: { suggestion_id: "mms_1", status: "accepted", field_key: "performance" },
-        record: { record_id: "rec_1", fields: { performance: { status: "multimodal_pending", provenance: { source: "multimodal" } } } },
+        suggestion: { suggestion_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "accepted", field_key: "performance" },
+        record: { record_id: "66666666-6666-4666-8666-666666666666", fields: { performance: { status: "multimodal_pending", provenance: { source: "multimodal" } } } },
       });
     }
-    if (url.endsWith("/suggestions/mms_1/reject")) {
-      return jsonResponse({ suggestion: { suggestion_id: "mms_1", status: "rejected" } });
+    if (url.endsWith("/suggestions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/reject")) {
+      return jsonResponse({ suggestion: { suggestion_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "rejected" } });
     }
     if (url.endsWith("/suggestions/bulk")) {
-      return jsonResponse({ task_id: "ext_1", updated: 1, suggestions: [{ suggestion_id: "mms_2", status: "accepted" }] });
+      return jsonResponse({ task_id: "22222222-2222-4222-8222-222222222222", updated: 1, suggestions: [{ suggestion_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", status: "accepted" }] });
     }
     return jsonResponse({});
   };
 
   setApiUserId("alice");
-  const summary = await structuredExtractionApi.getReviewSummary("ext_1", "run_1");
-  const queue = await structuredExtractionApi.listReviewQueue("ext_1", { runId: "run_1", queue: "multimodal_pending" });
-  const started = await structuredExtractionApi.startMultimodalReviewJob("ext_1", "run_1", { scanMode: "related_pages_assets", reason: "run check" });
-  const jobs = await structuredExtractionApi.listMultimodalReviewJobs("ext_1", "run_1");
-  const job = await structuredExtractionApi.getMultimodalReviewJob("ext_1", "mmr_1");
-  const cancelled = await structuredExtractionApi.cancelMultimodalReviewJob("ext_1", "mmr_1");
-  const accepted = await structuredExtractionApi.acceptReviewSuggestion("ext_1", "mms_1", { reason: "ok" });
-  const rejected = await structuredExtractionApi.rejectReviewSuggestion("ext_1", "mms_1", { reason: "bad" });
-  const bulk = await structuredExtractionApi.bulkReviewSuggestions("ext_1", { suggestionIds: ["mms_2"], action: "accept", reason: "batch" });
+  const summary = await structuredExtractionApi.getReviewSummary("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const queue = await structuredExtractionApi.listReviewQueue("22222222-2222-4222-8222-222222222222", { runId: "44444444-4444-4444-8444-444444444444", queue: "multimodal_pending" });
+  const started = await structuredExtractionApi.startMultimodalReviewJob("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444", { scanMode: "related_pages_assets", reason: "run check" });
+  const jobs = await structuredExtractionApi.listMultimodalReviewJobs("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const job = await structuredExtractionApi.getMultimodalReviewJob("22222222-2222-4222-8222-222222222222", "99999999-9999-4999-8999-999999999999");
+  const cancelled = await structuredExtractionApi.cancelMultimodalReviewJob("22222222-2222-4222-8222-222222222222", "99999999-9999-4999-8999-999999999999");
+  const accepted = await structuredExtractionApi.acceptReviewSuggestion("22222222-2222-4222-8222-222222222222", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { reason: "ok" });
+  const rejected = await structuredExtractionApi.rejectReviewSuggestion("22222222-2222-4222-8222-222222222222", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { reason: "bad" });
+  const bulk = await structuredExtractionApi.bulkReviewSuggestions("22222222-2222-4222-8222-222222222222", { suggestionIds: ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], action: "accept", reason: "batch" });
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/review/summary?run_id=run_1");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/review/summary?run_id=44444444-4444-4444-8444-444444444444");
   assert.equal(calls[0].headers["X-User-Id"], "alice");
-  assert.equal(calls[1].url, "/api/structured-extraction/tasks/ext_1/review/queue?run_id=run_1&queue=multimodal_pending");
-  assert.equal(calls[2].url, "/api/structured-extraction/tasks/ext_1/review/runs/run_1/multimodal-jobs");
+  assert.equal(calls[1].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/review/queue?run_id=44444444-4444-4444-8444-444444444444&queue=multimodal_pending");
+  assert.equal(calls[2].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/review/runs/44444444-4444-4444-8444-444444444444/multimodal-jobs");
   assert.deepEqual(calls[2].body, { scan_mode: "related_pages_assets", reason: "run check" });
   assert.equal(summary.pendingSuggestionCount, 1);
-  assert.equal(queue.rows[0].suggestions[0].suggestionId, "mms_1");
+  assert.equal(queue.rows[0].suggestions[0].suggestionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   assert.equal(started.scanMode, "related_pages_assets");
-  assert.equal(jobs.jobs[0].jobId, "mmr_1");
-  assert.equal(job.suggestions[0].provenance.jobId, "mmr_1");
+  assert.equal(jobs.jobs[0].jobId, "99999999-9999-4999-8999-999999999999");
+  assert.equal(job.suggestions[0].provenance.jobId, "99999999-9999-4999-8999-999999999999");
   assert.equal(cancelled.status, "cancelled");
   assert.equal(accepted.record.fields.performance.status, "multimodal_pending");
   assert.equal(rejected.suggestion.status, "rejected");
-  assert.deepEqual(calls[8].body, { suggestion_ids: ["mms_2"], action: "accept", reason: "batch" });
+  assert.deepEqual(calls[8].body, { suggestion_ids: ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], action: "accept", reason: "batch" });
   assert.equal(bulk.updated, 1);
 });
 
 test("structuredExtractionApi multimodal review APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "multimodal_model_not_configured" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.startMultimodalReviewJob("ext_1", "run_1"), /multimodal_model_not_configured/);
+  await assert.rejects(structuredExtractionApi.startMultimodalReviewJob("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444"), /multimodal_model_not_configured/);
 });
 
 test("structuredExtractionApi export APIs send contracts and normalize responses", async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options, body: options.body ? JSON.parse(options.body) : null, headers: options.headers || {} });
-    if (url.endsWith("/exports/preview?run_id=run_1")) {
+    if (url.endsWith("/exports/preview?run_id=44444444-4444-4444-8444-444444444444")) {
       return jsonResponse({
-        task_id: "ext_1",
-        run_id: "run_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         record_count: 1,
         field_count: 2,
         top_level_section_count: 6,
@@ -1204,12 +1216,12 @@ test("structuredExtractionApi export APIs send contracts and normalize responses
     }
     if (url.endsWith("/exports") && !options.method) {
       return jsonResponse({
-        task_id: "ext_1",
+        task_id: "22222222-2222-4222-8222-222222222222",
         exports: [
           {
-            export_id: "exp_v1",
-            task_id: "ext_1",
-            run_id: "run_1",
+            export_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            task_id: "22222222-2222-4222-8222-222222222222",
+            run_id: "44444444-4444-4444-8444-444444444444",
             collection_version: "col_v1",
             schema_version: "schema_v1",
             record_count: 1,
@@ -1227,9 +1239,9 @@ test("structuredExtractionApi export APIs send contracts and normalize responses
     }
     if (url.endsWith("/exports") && options.method === "POST") {
       return jsonResponse({
-        export_id: "exp_v2",
-        task_id: "ext_1",
-        run_id: "run_1",
+        export_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         collection_version: "col_v1",
         schema_version: "schema_v1",
         record_count: 1,
@@ -1243,11 +1255,11 @@ test("structuredExtractionApi export APIs send contracts and normalize responses
         created_at: 11,
       });
     }
-    if (url.endsWith("/exports/exp_v1")) {
+    if (url.endsWith("/exports/cccccccc-cccc-4ccc-8ccc-cccccccccccc")) {
       return jsonResponse({
-        export_id: "exp_v1",
-        task_id: "ext_1",
-        run_id: "run_1",
+        export_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        task_id: "22222222-2222-4222-8222-222222222222",
+        run_id: "44444444-4444-4444-8444-444444444444",
         collection_version: "col_v1",
         schema_version: "schema_v1",
         record_count: 1,
@@ -1265,38 +1277,38 @@ test("structuredExtractionApi export APIs send contracts and normalize responses
   };
 
   setApiUserId("alice");
-  const preview = await structuredExtractionApi.previewExport("ext_1", "run_1");
-  const list = await structuredExtractionApi.listExports("ext_1");
-  const created = await structuredExtractionApi.createExport("ext_1", {
-    runId: "run_1",
+  const preview = await structuredExtractionApi.previewExport("22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444");
+  const list = await structuredExtractionApi.listExports("22222222-2222-4222-8222-222222222222");
+  const created = await structuredExtractionApi.createExport("22222222-2222-4222-8222-222222222222", {
+    runId: "44444444-4444-4444-8444-444444444444",
     formats: ["csv", "json", "xlsx", "markdown"],
     includeRejected: false,
     includeBaseValues: true,
     includeReviewMetadata: true,
   });
-  const detail = await structuredExtractionApi.getExport("ext_1", "exp_v1");
-  const download = await structuredExtractionApi.downloadExport("ext_1", "exp_v1", "csv");
+  const detail = await structuredExtractionApi.getExport("22222222-2222-4222-8222-222222222222", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  const download = await structuredExtractionApi.downloadExport("22222222-2222-4222-8222-222222222222", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "csv");
   clearApiUserId();
 
-  assert.equal(calls[0].url, "/api/structured-extraction/tasks/ext_1/exports/preview?run_id=run_1");
+  assert.equal(calls[0].url, "/api/structured-extraction/tasks/22222222-2222-4222-8222-222222222222/exports/preview?run_id=44444444-4444-4444-8444-444444444444");
   assert.equal(calls[0].headers["X-User-Id"], "alice");
   assert.equal(preview.recordCount, 1);
   assert.equal(preview.topLevelSectionCount, 6);
   assert.equal(preview.leafPathCount, 12);
   assert.equal(preview.reviewStatusCounts.unreviewed, 1);
-  assert.equal(list.exports[0].exportId, "exp_v1");
-  assert.equal(calls[2].body.run_id, "run_1");
+  assert.equal(list.exports[0].exportId, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  assert.equal(calls[2].body.run_id, "44444444-4444-4444-8444-444444444444");
   assert.deepEqual(calls[2].body.formats, ["csv", "json", "xlsx", "markdown"]);
   assert.equal(calls[2].body.include_base_values, true);
-  assert.equal(created.exportId, "exp_v2");
-  assert.equal(detail.exportId, "exp_v1");
+  assert.equal(created.exportId, "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+  assert.equal(detail.exportId, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   assert.equal(await download.text(), "csv");
 });
 
 test("structuredExtractionApi export APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "export failed" }, { status: 400 });
 
-  await assert.rejects(structuredExtractionApi.createExport("ext_1", { formats: ["csv"] }), /export failed/);
+  await assert.rejects(structuredExtractionApi.createExport("22222222-2222-4222-8222-222222222222", { formats: ["csv"] }), /export failed/);
 });
 
 test("streamWorkflow surfaces backend error detail", async () => {

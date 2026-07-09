@@ -18,8 +18,8 @@ def _start_completed_with_errors(client, task_id: str, monkeypatch) -> dict:
             '{"records":[]}',
         ]
     )
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
     run = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     final = _wait_for_terminal(client, task_id, run["run_id"])
     assert final["status"] == "completed_with_errors"
@@ -84,7 +84,7 @@ def test_resume_reuses_run_id_skips_completed_items_and_does_not_double_count(mo
             )
         ]
     )
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
 
     resumed = client.post(
         f"/api/structured-extraction/tasks/{task_id}/runs/{run['run_id']}/resume",
@@ -179,7 +179,7 @@ def test_cancelled_run_with_remaining_items_can_resume(monkeypatch, tmp_path):
     import modules.structured_extraction.llm_extraction as llm_extraction
 
     fake = FakeLLM(['{"records":[]}'])
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
     response = client.post(f"/api/structured-extraction/tasks/{task_id}/runs/{run['run_id']}/resume", headers={"X-User-Id": "alice"})
     assert response.status_code == 200
     terminal = _wait_for_terminal(client, task_id, run["run_id"])

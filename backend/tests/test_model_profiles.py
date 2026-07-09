@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+import os
+
+import pytest
+
+if not os.getenv("DATABASE_URL"):
+    pytest.skip(
+        "M2 PostgreSQL model profile tests require DATABASE_URL; see test_postgres_m2_core_runtime.py for migrated coverage.",
+        allow_module_level=True,
+    )
+
 import core.secret_store as secret_module
 from core.model_profiles import ModelProfileStore
 

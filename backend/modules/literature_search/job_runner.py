@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any, Callable
 
@@ -41,8 +40,6 @@ class JobRunner:
             turn_id=payload.get("turn_id"),
             user_id=user_id,
         )
-        thread = threading.Thread(target=self._run_sync, args=(job["job_id"], job_type, payload), daemon=True)
-        thread.start()
         return job
 
     def _run_sync(self, job_id: str, job_type: str, payload: dict[str, Any]) -> None:
@@ -52,6 +49,12 @@ class JobRunner:
             self.store.complete(job_id, result)
         except Exception as exc:  # noqa: BLE001 - convert to job event
             self.store.fail(job_id, str(exc))
+
+    def execute_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        return self._execute(job["job_id"], job["job_type"], job.get("payload") or {})
+
+    def run_inline(self, job: dict[str, Any]) -> None:
+        self._run_sync(job["job_id"], job["job_type"], job.get("payload") or {})
 
     def _execute(self, job_id: str, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -83,6 +86,7 @@ class JobRunner:
                     session_id=job.get("session_id"),
                     turn_id=job.get("turn_id"),
                     link_type=artifact.get("artifact_type") or job_type,
+                    user_id=job.get("user_id"),
                 )
         return result
 

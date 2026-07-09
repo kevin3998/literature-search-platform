@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import threading
-import uuid
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.settings_store import settings_store
 from core.user_context import UserContext
+from core.worker.queue import JobQueue
 
 from .artifacts import write_multimodal_review_artifacts
 from .review import StructuredExtractionReviewService, _is_missing_value, _priority_from_record_flags
 from .schemas import MultimodalReviewJobCreateRequest, ReviewSuggestionActionRequest, ReviewSuggestionBulkRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, new_uuid, now
 
 JOB_STATUSES = {"queued", "running", "completed", "failed", "cancelling", "cancelled", "interrupted"}
 ACTIVE_JOB_STATUSES = {"queued", "running", "cancelling"}
@@ -23,12 +21,13 @@ class StructuredExtractionMultimodalReviewService:
     def __init__(self, store: StructuredExtractionStore, review: StructuredExtractionReviewService) -> None:
         self.store = store
         self.review = review
+        self.job_queue = JobQueue(self.store.engine)
 
     def summary(self, task_id: str, *, user: UserContext, run_id: str | None = None) -> dict[str, Any]:
         run = self.review._resolve_run(task_id, user=user, run_id=run_id)  # noqa: SLF001
         rows = self._rows(task_id, run["run_id"], user=user)
         suggestions = self._suggestions(task_id, run["run_id"], user=user)
-        summary = _summary_from_rows(task_id, run["run_id"], rows, suggestions, multimodal_ready=self._model_ready()["ready"])
+        summary = _summary_from_rows(task_id, run["run_id"], rows, suggestions, multimodal_ready=self._model_ready(user.user_id)["ready"])
         self._write_artifacts(task_id, run["run_id"], user=user, summary=summary)
         return summary
 
@@ -58,7 +57,7 @@ class StructuredExtractionMultimodalReviewService:
         }
 
     def start_job(self, task_id: str, run_id: str, payload: MultimodalReviewJobCreateRequest, *, user: UserContext) -> dict[str, Any]:
-        ready = self._model_ready()
+        ready = self._model_ready(user.user_id)
         if not ready["ready"]:
             raise ValueError("multimodal_model_not_configured")
         run = self.review._resolve_run(task_id, user=user, run_id=run_id)  # noqa: SLF001
@@ -80,7 +79,7 @@ class StructuredExtractionMultimodalReviewService:
         if scan_mode not in SCAN_MODES:
             raise ValueError("unsupported_multimodal_scan_mode")
         ts = now()
-        job_id = f"mmr_{uuid.uuid4().hex[:12]}"
+        job_id = new_uuid()
         total = sum(max(1, len(row.get("fields") or {})) for row in rows)
         self.store.conn.execute(
             """
@@ -93,8 +92,17 @@ class StructuredExtractionMultimodalReviewService:
             (job_id, task_id, run["run_id"], user.user_id, scan_mode, payload.reason or "", dumps(ready["model_snapshot"]), total, ts, ts),
         )
         self.store.conn.commit()
-        thread = threading.Thread(target=self._run_job, args=(task_id, run["run_id"], job_id, user), daemon=True)
-        thread.start()
+        core_job = self.job_queue.enqueue(
+            "structured.multimodal_review",
+            {"task_id": task_id, "run_id": run["run_id"], "job_id": job_id, "user_id": user.user_id},
+            user_id=user.user_id,
+            queue="structured-extraction",
+        )
+        self.store.conn.execute(
+            "update structured_extraction_multimodal_review_jobs set core_job_id = ? where job_id = ?",
+            (core_job["job_id"], job_id),
+        )
+        self.store.conn.commit()
         return self.get_job(task_id, job_id, user=user)
 
     def list_jobs(self, task_id: str, run_id: str, *, user: UserContext) -> dict[str, Any]:
@@ -127,6 +135,16 @@ class StructuredExtractionMultimodalReviewService:
         job = self.get_job(task_id, job_id, user=user)
         if job["status"] in {"completed", "failed", "cancelled"}:
             return job
+        if job["status"] == "queued":
+            done = now()
+            self.store.conn.execute(
+                "update structured_extraction_multimodal_review_jobs set status = 'cancelled', updated_at = ?, completed_at = ? where task_id = ? and user_id = ? and job_id = ?",
+                (done, done, task_id, user.user_id, job_id),
+            )
+            self.store.conn.commit()
+            if job.get("core_job_id"):
+                self.job_queue.cancel(job["core_job_id"])
+            return self.get_job(task_id, job_id, user=user)
         ts = now()
         self.store.conn.execute(
             """
@@ -137,6 +155,8 @@ class StructuredExtractionMultimodalReviewService:
             (ts, task_id, user.user_id, job_id),
         )
         self.store.conn.commit()
+        if job.get("core_job_id"):
+            self.job_queue.cancel(job["core_job_id"])
         return self.get_job(task_id, job_id, user=user)
 
     def accept_suggestion(self, task_id: str, suggestion_id: str, payload: ReviewSuggestionActionRequest, *, user: UserContext) -> dict[str, Any]:
@@ -351,13 +371,13 @@ class StructuredExtractionMultimodalReviewService:
         coverage: str,
         issue_type: str | None,
     ) -> None:
-        suggestion_id = f"mms_{uuid.uuid4().hex[:12]}"
+        suggestion_id = new_uuid()
         current_value = field.get("effective_value")
         evidence = _evidence_from_value(current_value)
         provenance = {
             "source": "multimodal",
             "job_id": job_id,
-            "model": self._model_ready()["model_snapshot"].get("model") or "",
+            "model": self._model_ready(user.user_id)["model_snapshot"].get("model") or "",
             "evidence_type": evidence.get("evidence_type") or "text",
             "evidence_location": evidence.get("evidence_location") or "",
             "confidence": "medium",
@@ -440,21 +460,21 @@ class StructuredExtractionMultimodalReviewService:
             raise KeyError(f"multimodal suggestion not found: {suggestion_id}")
         return _row_to_suggestion(row)
 
-    def _model_ready(self) -> dict[str, Any]:
-        config = settings_store.model_config()
-        enabled = bool(settings_store.value("models", "multimodal_enabled"))
-        profile_id = str(settings_store.value("models", "multimodal_profile_id") or "")
+    def _model_ready(self, user_id: str) -> dict[str, Any]:
+        config = settings_store.model_config(user_id=user_id)
+        enabled = bool(settings_store.value("models", "multimodal_enabled", user_id=user_id))
+        profile_id = str(settings_store.value("models", "multimodal_profile_id", user_id=user_id) or "")
         profile: dict[str, Any] | None = None
         if profile_id:
             try:
                 from core.model_profiles import model_profile_store
 
-                profile = model_profile_store.get(profile_id)
+                profile = model_profile_store.get(profile_id, user_id=user_id)
             except Exception:  # noqa: BLE001
                 profile = None
         provider = (profile or {}).get("provider") or config.get("provider") or ""
-        model = str(settings_store.value("models", "multimodal_model") or (profile or {}).get("model") or config.get("strong_model") or config.get("chat_model") or "")
-        default_scan = str(settings_store.value("models", "multimodal_scan_default") or "related_pages_assets")
+        model = str(settings_store.value("models", "multimodal_model", user_id=user_id) or (profile or {}).get("model") or config.get("strong_model") or config.get("chat_model") or "")
+        default_scan = str(settings_store.value("models", "multimodal_scan_default", user_id=user_id) or "related_pages_assets")
         return {
             "ready": bool(enabled and model),
             "default_scan_mode": default_scan if default_scan in SCAN_MODES else "related_pages_assets",
@@ -471,7 +491,7 @@ class StructuredExtractionMultimodalReviewService:
         suggestions = self._suggestions(task_id, run_id, user=user)
         if summary is None:
             rows = self._rows(task_id, run_id, user=user)
-            summary = _summary_from_rows(task_id, run_id, rows, suggestions, multimodal_ready=self._model_ready()["ready"])
+            summary = _summary_from_rows(task_id, run_id, rows, suggestions, multimodal_ready=self._model_ready(user.user_id)["ready"])
         write_multimodal_review_artifacts(user, task_id, run_id, jobs, suggestions, summary)
 
 
@@ -585,6 +605,7 @@ def _row_to_job(row) -> dict[str, Any]:
         "current_section": row["current_section"],
         "warnings": loads(row["warnings_json"], []) or [],
         "error": loads(row["error_json"], None) if row["error_json"] else None,
+        "core_job_id": row["core_job_id"] if "core_job_id" in row.keys() else None,
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "updated_at": row["updated_at"],

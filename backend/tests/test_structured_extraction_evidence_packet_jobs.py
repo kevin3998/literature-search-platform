@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
+import uuid
 
 from test_structured_extraction_preparation import _client_with_schema
+from test_structured_extraction_runs import _run_structured_worker_once
+
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def test_ranked_chunks_checks_cancel_during_scan():
@@ -133,6 +138,7 @@ def _wait_for_job(client, task_id: str, build_job_id: str, *, timeout: float = 5
     deadline = time.time() + timeout
     job = None
     while time.time() < deadline:
+        _run_structured_worker_once()
         job = client.get(
             f"/api/structured-extraction/tasks/{task_id}/evidence-packets/build-jobs/{build_job_id}",
             headers={"X-User-Id": "alice"},
@@ -154,7 +160,7 @@ def test_evidence_packet_build_job_completes_and_paginates_items(monkeypatch, tm
     )
     assert started.status_code == 200
     job = started.json()
-    assert job["build_job_id"].startswith("epb_")
+    assert UUID_RE.match(job["build_job_id"])
     assert job["status"] in {"queued", "running", "completed"}
     assert job["target_packet_version"] == "ep_v1"
     assert job["total_item_count"] == 4
@@ -188,7 +194,7 @@ def test_evidence_packet_build_job_completes_and_paginates_items(monkeypatch, tm
     assert listed["jobs"][0]["build_job_id"] == job["build_job_id"]
 
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    workspace = root / "users" / "alice" / task["workspace_rel_path"] / "evidence_packets"
+    workspace = root / "users" / task["user_id"] / task["workspace_rel_path"] / "evidence_packets"
     assert json.loads((workspace / "packet_ep_v1.json").read_text(encoding="utf-8"))["packet_version"] == "ep_v1"
     assert len((workspace / "packet_ep_v1_items.jsonl").read_text(encoding="utf-8").strip().splitlines()) == 4
 
@@ -253,16 +259,17 @@ def test_evidence_packet_build_job_reaper_marks_active_jobs_interrupted(monkeypa
 
     from core.memory_db import dumps, now
 
-    build_job_id = "epb_reaper_test"
+    task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
+    build_job_id = str(uuid.uuid4())
     ts = now()
     structured_extraction_evidence_packet_service.store.conn.execute(
         """
         insert into structured_extraction_evidence_packet_build_jobs(
             build_job_id, task_id, user_id, status, phase, collection_version, schema_version,
             prompt_contract_version, target_packet_version, settings_json, created_at, updated_at
-        ) values(?, ?, 'alice', 'running', 'building_items', 'col_v1', 'schema_v1', 'pc_v1', 'ep_v1', ?, ?, ?)
+        ) values(?, ?, ?, 'running', 'building_items', 'col_v1', 'schema_v1', 'pc_v1', 'ep_v1', ?, ?, ?)
         """,
-        (build_job_id, task_id, dumps({}), ts, ts),
+        (build_job_id, task_id, task["user_id"], dumps({}), ts, ts),
     )
     structured_extraction_evidence_packet_service.store.conn.commit()
 

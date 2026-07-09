@@ -26,14 +26,22 @@ def engine_for_url(url: str, *, schema: str | None = None) -> Engine:
     )
     target_schema = validate_schema_name(schema) if schema is not None else database_schema()
 
-    @event.listens_for(engine, "connect")
-    def _set_search_path(dbapi_connection, _connection_record):  # noqa: ANN001
+    def _configure_connection(dbapi_connection) -> None:  # noqa: ANN001
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute(f'SET search_path TO "{target_schema}", public')
             cursor.execute(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
         finally:
             cursor.close()
+        dbapi_connection.commit()
+
+    @event.listens_for(engine, "connect")
+    def _set_search_path_on_connect(dbapi_connection, _connection_record):  # noqa: ANN001
+        _configure_connection(dbapi_connection)
+
+    @event.listens_for(engine, "checkout")
+    def _set_search_path_on_checkout(dbapi_connection, _connection_record, _connection_proxy):  # noqa: ANN001
+        _configure_connection(dbapi_connection)
 
     return engine
 

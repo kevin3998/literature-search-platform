@@ -3,12 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
 
 from .artifacts import write_prompt_contract
 from .schemas import PromptContractCompileRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, now
 
 EXTRACTION_RULES = [
     "Do not guess or infer values from general knowledge.",

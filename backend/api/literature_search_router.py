@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from modules.literature_search.artifact_store import ArtifactStore
@@ -26,6 +26,7 @@ from modules.literature_search.schemas import (
 )
 from core.session_store import session_store
 from core.settings_store import settings_store
+from core.user_context import UserContext, current_user
 
 router = APIRouter(prefix="/api/literature-search", tags=["literature-search"])
 
@@ -72,10 +73,10 @@ def index_health():
 
 
 @router.post("/search")
-def search(payload: SearchRequest):
+def search(payload: SearchRequest, user: UserContext = Depends(current_user)):
     try:
         data = payload.model_dump(exclude={"query"})
-        defaults = settings_store.retrieval_defaults()
+        defaults = settings_store.retrieval_defaults(user_id=user.user_id)
         for request_key, default_value in defaults.items():
             if request_key not in payload.model_fields_set:
                 data[request_key] = default_value
@@ -86,7 +87,7 @@ def search(payload: SearchRequest):
 
 
 @router.post("/acquire-evidence")
-def acquire_evidence(payload: SearchRequest):
+def acquire_evidence(payload: SearchRequest, user: UserContext = Depends(current_user)):
     """Block 2: auditable evidence acquisition packet wrapping raw search.
 
     Additive endpoint — ``/search`` keeps returning the legacy shape for existing
@@ -95,7 +96,7 @@ def acquire_evidence(payload: SearchRequest):
     """
     try:
         data = payload.model_dump(exclude={"query"})
-        defaults = settings_store.retrieval_defaults()
+        defaults = settings_store.retrieval_defaults(user_id=user.user_id)
         for request_key, default_value in defaults.items():
             if request_key not in payload.model_fields_set:
                 data[request_key] = default_value
@@ -146,8 +147,8 @@ def evidence_expand(payload: EvidenceExpandRequest):
 
 
 @router.post("/pack")
-def pack(payload: PackRequest):
-    job = job_runner.submit("pack", payload.model_dump())
+def pack(payload: PackRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("pack", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
@@ -160,14 +161,14 @@ def task_plan(payload: TaskRequest):
 
 
 @router.post("/task/run")
-def task_run(payload: TaskRequest):
-    job = job_runner.submit("task_run", payload.model_dump())
+def task_run(payload: TaskRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("task_run", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/run")
-def run(payload: RunRequest):
-    job = job_runner.submit("run", payload.model_dump())
+def run(payload: RunRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("run", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
@@ -188,26 +189,26 @@ def run_show(run_id: str):
 
 
 @router.post("/runs/{run_id}/resume")
-def run_resume(run_id: str):
-    job = job_runner.submit("run_resume", {"run_id": run_id})
+def run_resume(run_id: str, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("run_resume", {"run_id": run_id, "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/extract")
-def extract(payload: ExtractRequest):
-    job = job_runner.submit("extract", payload.model_dump())
+def extract(payload: ExtractRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("extract", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/compare")
-def compare(payload: CompareRequest):
-    job = job_runner.submit("compare", payload.model_dump())
+def compare(payload: CompareRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("compare", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/analysis/bundle")
-def analysis_bundle(payload: AnalysisBundleRequest):
-    job = job_runner.submit("analysis_bundle", payload.model_dump())
+def analysis_bundle(payload: AnalysisBundleRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("analysis_bundle", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
@@ -220,26 +221,26 @@ def analysis_show(bundle_id: str):
 
 
 @router.post("/verify-answer")
-def verify_answer(payload: VerifyAnswerRequest):
-    job = job_runner.submit("verify_answer", payload.model_dump())
+def verify_answer(payload: VerifyAnswerRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("verify_answer", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/notes/build")
-def notes_build(payload: NotesRequest):
-    job = job_runner.submit("notes_build", payload.model_dump())
+def notes_build(payload: NotesRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("notes_build", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/synthesize")
-def synthesize(payload: SynthesizeRequest):
-    job = job_runner.submit("synthesize", payload.model_dump())
+def synthesize(payload: SynthesizeRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("synthesize", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.post("/quality")
-def quality(payload: QualityRequest):
-    job = job_runner.submit("quality", payload.model_dump())
+def quality(payload: QualityRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("quality", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
@@ -252,54 +253,54 @@ def vector_status():
 
 
 @router.post("/vector/build")
-def vector_build(payload: VectorBuildRequest):
-    job = job_runner.submit("vector_build", payload.model_dump())
+def vector_build(payload: VectorBuildRequest, user: UserContext = Depends(current_user)):
+    job = job_runner.submit("vector_build", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 
 
 @router.get("/artifacts")
-def artifacts():
+def artifacts(user: UserContext = Depends(current_user)):
     try:
         items = [
             {key: value for key, value in item.items() if not key.startswith("_")}
             for item in ArtifactStore(service.data_dir).list_artifacts()
         ]
         for item in items:
-            session_store.record_artifact(item)
+            session_store.record_artifact(item, user_id=user.user_id)
         return items
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
 
 @router.get("/artifacts/{artifact_id}")
-def artifact(artifact_id: str):
+def artifact(artifact_id: str, user: UserContext = Depends(current_user)):
     try:
         item = ArtifactStore(service.data_dir).read_artifact(artifact_id)
-        session_store.record_artifact(item)
+        session_store.record_artifact(item, user_id=user.user_id)
         return item
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
 
 @router.get("/jobs/{job_id}")
-def job(job_id: str):
+def job(job_id: str, user: UserContext = Depends(current_user)):
     try:
-        return job_store.get(job_id)
+        return job_store.get(job_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
 
 @router.get("/jobs/{job_id}/stream")
-async def job_stream(job_id: str):
+async def job_stream(job_id: str, user: UserContext = Depends(current_user)):
     try:
-        job_store.get(job_id)
+        job_store.get(job_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
     async def events():
         index = 0
         while True:
-            emitted = job_store.events(job_id, after=index)
+            emitted = job_store.events(job_id, after=index, user_id=user.user_id)
             for event in emitted:
                 index += 1
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

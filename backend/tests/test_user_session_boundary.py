@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import os
+
+import pytest
 from fastapi.testclient import TestClient
+
+if not os.getenv("DATABASE_URL"):
+    pytest.skip(
+        "M2 PostgreSQL session boundary tests require DATABASE_URL; see test_postgres_m2_core_runtime.py for migrated coverage.",
+        allow_module_level=True,
+    )
 
 from core.module_base import AgentModule
 from core.registry import registry

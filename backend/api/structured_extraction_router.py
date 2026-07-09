@@ -45,6 +45,16 @@ from modules.structured_extraction.shared import (
 router = APIRouter(prefix="/api/structured-extraction", tags=["structured-extraction"])
 
 
+def current_structured_user(user: UserContext = Depends(current_user)) -> UserContext:
+    return UserContext(
+        user_id=user.user_id,
+        workspace_slug=user.user_id,
+        subject=user.subject,
+        display_name=user.display_name,
+        auth_mode=user.auth_mode,
+    )
+
+
 def _handle_error(exc: Exception):
     if isinstance(exc, KeyError):
         raise HTTPException(status_code=404, detail="structured extraction task not found") from exc
@@ -56,7 +66,7 @@ def _handle_error(exc: Exception):
 
 
 @router.get("/tasks")
-def list_tasks(include_archived: bool = False, limit: int = 100, user: UserContext = Depends(current_user)):
+def list_tasks(include_archived: bool = False, limit: int = 100, user: UserContext = Depends(current_structured_user)):
     try:
         return {
             "tasks": structured_extraction_store.list_tasks(
@@ -70,7 +80,7 @@ def list_tasks(include_archived: bool = False, limit: int = 100, user: UserConte
 
 
 @router.post("/tasks")
-def create_task(payload: TaskCreateRequest, user: UserContext = Depends(current_user)):
+def create_task(payload: TaskCreateRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_store.create_task(
             name=payload.name,
@@ -82,7 +92,7 @@ def create_task(payload: TaskCreateRequest, user: UserContext = Depends(current_
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str, user: UserContext = Depends(current_user)):
+def get_task(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_store.get_task(task_id, user_id=user.user_id)
     except Exception as exc:  # noqa: BLE001
@@ -90,7 +100,7 @@ def get_task(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.patch("/tasks/{task_id}")
-def update_task(task_id: str, payload: TaskUpdateRequest, user: UserContext = Depends(current_user)):
+def update_task(task_id: str, payload: TaskUpdateRequest, user: UserContext = Depends(current_structured_user)):
     try:
         fields = payload.model_dump(exclude_none=True)
         return structured_extraction_store.update_task(task_id, user=user, **fields)
@@ -99,7 +109,7 @@ def update_task(task_id: str, payload: TaskUpdateRequest, user: UserContext = De
 
 
 @router.post("/tasks/{task_id}/duplicate")
-def duplicate_task(task_id: str, payload: TaskDuplicateRequest, user: UserContext = Depends(current_user)):
+def duplicate_task(task_id: str, payload: TaskDuplicateRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_store.duplicate_task(
             task_id,
@@ -112,7 +122,7 @@ def duplicate_task(task_id: str, payload: TaskDuplicateRequest, user: UserContex
 
 
 @router.post("/tasks/{task_id}/archive")
-def archive_task(task_id: str, payload: TaskArchiveRequest, user: UserContext = Depends(current_user)):
+def archive_task(task_id: str, payload: TaskArchiveRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_store.set_archived(task_id, payload.archived, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -120,7 +130,7 @@ def archive_task(task_id: str, payload: TaskArchiveRequest, user: UserContext = 
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, user: UserContext = Depends(current_user)):
+def delete_task(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.soft_delete(task_id, user=user)
         return {"task_id": task_id, "deleted": True}
@@ -129,7 +139,7 @@ def delete_task(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.post("/tasks/{task_id}/collection/search")
-def search_collection(task_id: str, payload: CollectionSearchRequest, user: UserContext = Depends(current_user)):
+def search_collection(task_id: str, payload: CollectionSearchRequest, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.search(task_id, payload, user=user)
@@ -138,7 +148,7 @@ def search_collection(task_id: str, payload: CollectionSearchRequest, user: User
 
 
 @router.get("/tasks/{task_id}/collection/filter-options")
-def collection_filter_options(task_id: str, user: UserContext = Depends(current_user)):
+def collection_filter_options(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.filter_options(task_id, user=user)
@@ -153,7 +163,7 @@ def list_collection_candidates(
     source: str | None = None,
     q: str | None = None,
     limit: int = 100,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -174,7 +184,7 @@ def set_candidate_decision(
     task_id: str,
     candidate_id: str,
     payload: CandidateDecisionRequest,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -184,7 +194,7 @@ def set_candidate_decision(
 
 
 @router.post("/tasks/{task_id}/collection/candidates/bulk-decision")
-def bulk_candidate_decision(task_id: str, payload: BulkCandidateDecisionRequest, user: UserContext = Depends(current_user)):
+def bulk_candidate_decision(task_id: str, payload: BulkCandidateDecisionRequest, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.bulk_decision(task_id, payload, user=user)
@@ -193,16 +203,16 @@ def bulk_candidate_decision(task_id: str, payload: BulkCandidateDecisionRequest,
 
 
 @router.post("/tasks/{task_id}/collection/question-expansion")
-async def question_expansion(task_id: str, payload: QuestionExpansionRequest, user: UserContext = Depends(current_user)):
+async def question_expansion(task_id: str, payload: QuestionExpansionRequest, user: UserContext = Depends(current_structured_user)):
     try:
         task = structured_extraction_store.get_task(task_id, user_id=user.user_id)
-        return await expand_question(payload, task=task)
+        return await expand_question(payload, task=task, user=user)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
 
 @router.post("/tasks/{task_id}/collection/llm-screen")
-async def llm_screen(task_id: str, payload: LLMScreenRequest, user: UserContext = Depends(current_user)):
+async def llm_screen(task_id: str, payload: LLMScreenRequest, user: UserContext = Depends(current_structured_user)):
     try:
         task = structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return await screen_candidates(
@@ -217,7 +227,7 @@ async def llm_screen(task_id: str, payload: LLMScreenRequest, user: UserContext 
 
 
 @router.post("/tasks/{task_id}/collection/freeze")
-def freeze_collection(task_id: str, user: UserContext = Depends(current_user)):
+def freeze_collection(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.freeze(task_id, user=user)
@@ -226,7 +236,7 @@ def freeze_collection(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.get("/tasks/{task_id}/collection/versions")
-def list_collection_versions(task_id: str, user: UserContext = Depends(current_user)):
+def list_collection_versions(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.list_versions(task_id, user=user)
@@ -235,7 +245,7 @@ def list_collection_versions(task_id: str, user: UserContext = Depends(current_u
 
 
 @router.get("/tasks/{task_id}/collection/versions/{collection_version}")
-def get_collection_version(task_id: str, collection_version: str, user: UserContext = Depends(current_user)):
+def get_collection_version(task_id: str, collection_version: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_collection_service.get_version(task_id, collection_version, user=user)
@@ -244,7 +254,7 @@ def get_collection_version(task_id: str, collection_version: str, user: UserCont
 
 
 @router.get("/tasks/{task_id}/schema/draft")
-def get_schema_draft(task_id: str, user: UserContext = Depends(current_user)):
+def get_schema_draft(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.get_draft(task_id, user=user)
@@ -253,7 +263,7 @@ def get_schema_draft(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.put("/tasks/{task_id}/schema/draft")
-def save_schema_draft(task_id: str, payload: SchemaDraftSaveRequest, user: UserContext = Depends(current_user)):
+def save_schema_draft(task_id: str, payload: SchemaDraftSaveRequest, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.save_draft(task_id, payload, user=user)
@@ -262,16 +272,16 @@ def save_schema_draft(task_id: str, payload: SchemaDraftSaveRequest, user: UserC
 
 
 @router.post("/tasks/{task_id}/schema/assist")
-async def schema_assist(task_id: str, payload: SchemaAssistRequest, user: UserContext = Depends(current_user)):
+async def schema_assist(task_id: str, payload: SchemaAssistRequest, user: UserContext = Depends(current_structured_user)):
     try:
         task = structured_extraction_store.get_task(task_id, user_id=user.user_id)
-        return await assist_schema(payload, task=task)
+        return await assist_schema(payload, task=task, user=user)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
 
 @router.post("/tasks/{task_id}/schema/freeze")
-def freeze_schema(task_id: str, user: UserContext = Depends(current_user)):
+def freeze_schema(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.freeze(task_id, user=user)
@@ -280,7 +290,7 @@ def freeze_schema(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.get("/tasks/{task_id}/schema/versions")
-def list_schema_versions(task_id: str, user: UserContext = Depends(current_user)):
+def list_schema_versions(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.list_versions(task_id, user=user)
@@ -289,7 +299,7 @@ def list_schema_versions(task_id: str, user: UserContext = Depends(current_user)
 
 
 @router.get("/tasks/{task_id}/schema/versions/{schema_version}")
-def get_schema_version(task_id: str, schema_version: str, user: UserContext = Depends(current_user)):
+def get_schema_version(task_id: str, schema_version: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.get_version(task_id, schema_version, user=user)
@@ -298,7 +308,7 @@ def get_schema_version(task_id: str, schema_version: str, user: UserContext = De
 
 
 @router.post("/tasks/{task_id}/schema/versions/{schema_version}/duplicate-to-draft")
-def duplicate_schema_to_draft(task_id: str, schema_version: str, user: UserContext = Depends(current_user)):
+def duplicate_schema_to_draft(task_id: str, schema_version: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_schema_designer.duplicate_to_draft(task_id, schema_version, user=user)
@@ -310,7 +320,7 @@ def duplicate_schema_to_draft(task_id: str, schema_version: str, user: UserConte
 def compile_prompt_contract(
     task_id: str,
     payload: PromptContractCompileRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -320,7 +330,7 @@ def compile_prompt_contract(
 
 
 @router.get("/tasks/{task_id}/prompt-contract/versions")
-def list_prompt_contracts(task_id: str, user: UserContext = Depends(current_user)):
+def list_prompt_contracts(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_prompt_contract_service.list_versions(task_id, user=user)
@@ -329,7 +339,7 @@ def list_prompt_contracts(task_id: str, user: UserContext = Depends(current_user
 
 
 @router.get("/tasks/{task_id}/prompt-contract/versions/{prompt_contract_version}")
-def get_prompt_contract(task_id: str, prompt_contract_version: str, user: UserContext = Depends(current_user)):
+def get_prompt_contract(task_id: str, prompt_contract_version: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_prompt_contract_service.get_version(task_id, prompt_contract_version, user=user)
@@ -341,7 +351,7 @@ def get_prompt_contract(task_id: str, prompt_contract_version: str, user: UserCo
 def build_evidence_packet(
     task_id: str,
     payload: EvidencePacketBuildRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -354,7 +364,7 @@ def build_evidence_packet(
 def start_evidence_packet_build_job(
     task_id: str,
     payload: EvidencePacketBuildRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -364,7 +374,7 @@ def start_evidence_packet_build_job(
 
 
 @router.get("/tasks/{task_id}/evidence-packets/build-jobs")
-def list_evidence_packet_build_jobs(task_id: str, user: UserContext = Depends(current_user)):
+def list_evidence_packet_build_jobs(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_evidence_packet_service.list_build_jobs(task_id, user=user)
@@ -373,7 +383,7 @@ def list_evidence_packet_build_jobs(task_id: str, user: UserContext = Depends(cu
 
 
 @router.get("/tasks/{task_id}/evidence-packets/build-jobs/{build_job_id}")
-def get_evidence_packet_build_job(task_id: str, build_job_id: str, user: UserContext = Depends(current_user)):
+def get_evidence_packet_build_job(task_id: str, build_job_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_evidence_packet_service.get_build_job(task_id, build_job_id, user=user)
@@ -382,7 +392,7 @@ def get_evidence_packet_build_job(task_id: str, build_job_id: str, user: UserCon
 
 
 @router.post("/tasks/{task_id}/evidence-packets/build-jobs/{build_job_id}/cancel")
-def cancel_evidence_packet_build_job(task_id: str, build_job_id: str, user: UserContext = Depends(current_user)):
+def cancel_evidence_packet_build_job(task_id: str, build_job_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_evidence_packet_service.cancel_build_job(task_id, build_job_id, user=user)
@@ -391,7 +401,7 @@ def cancel_evidence_packet_build_job(task_id: str, build_job_id: str, user: User
 
 
 @router.get("/tasks/{task_id}/evidence-packets/versions")
-def list_evidence_packets(task_id: str, user: UserContext = Depends(current_user)):
+def list_evidence_packets(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_evidence_packet_service.list_versions(task_id, user=user)
@@ -400,7 +410,7 @@ def list_evidence_packets(task_id: str, user: UserContext = Depends(current_user
 
 
 @router.get("/tasks/{task_id}/evidence-packets/versions/{packet_version}")
-def get_evidence_packet(task_id: str, packet_version: str, user: UserContext = Depends(current_user)):
+def get_evidence_packet(task_id: str, packet_version: str, user: UserContext = Depends(current_structured_user)):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
         return structured_extraction_evidence_packet_service.get_version(task_id, packet_version, user=user)
@@ -414,7 +424,7 @@ def list_evidence_packet_items(
     packet_version: str,
     limit: int | None = None,
     offset: int | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         structured_extraction_store.get_task(task_id, user_id=user.user_id)
@@ -427,7 +437,7 @@ def list_evidence_packet_items(
 def start_extraction_run(
     task_id: str,
     payload: ExtractionRunStartRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_run_service.start(task_id, payload or ExtractionRunStartRequest(), user=user)
@@ -436,7 +446,7 @@ def start_extraction_run(
 
 
 @router.get("/tasks/{task_id}/runs")
-def list_extraction_runs(task_id: str, user: UserContext = Depends(current_user)):
+def list_extraction_runs(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.list_runs(task_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -444,7 +454,7 @@ def list_extraction_runs(task_id: str, user: UserContext = Depends(current_user)
 
 
 @router.get("/tasks/{task_id}/runs/{run_id}")
-def get_extraction_run(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def get_extraction_run(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.get(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -452,7 +462,7 @@ def get_extraction_run(task_id: str, run_id: str, user: UserContext = Depends(cu
 
 
 @router.get("/tasks/{task_id}/runs/{run_id}/items")
-def list_extraction_run_items(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def list_extraction_run_items(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.list_items(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -460,7 +470,7 @@ def list_extraction_run_items(task_id: str, run_id: str, user: UserContext = Dep
 
 
 @router.get("/tasks/{task_id}/runs/{run_id}/records")
-def list_extraction_run_records(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def list_extraction_run_records(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.list_records(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -468,7 +478,7 @@ def list_extraction_run_records(task_id: str, run_id: str, user: UserContext = D
 
 
 @router.get("/tasks/{task_id}/runs/{run_id}/recovery")
-def get_extraction_run_recovery(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def get_extraction_run_recovery(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.recovery_status(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -480,7 +490,7 @@ def resume_extraction_run(
     task_id: str,
     run_id: str,
     payload: ExtractionRunResumeRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_run_service.resume(task_id, run_id, payload or ExtractionRunResumeRequest(), user=user)
@@ -489,7 +499,7 @@ def resume_extraction_run(
 
 
 @router.post("/tasks/{task_id}/runs/{run_id}/cancel")
-def cancel_extraction_run(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def cancel_extraction_run(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_run_service.cancel(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -497,7 +507,7 @@ def cancel_extraction_run(task_id: str, run_id: str, user: UserContext = Depends
 
 
 @router.get("/tasks/{task_id}/review/runs")
-def list_review_runs(task_id: str, user: UserContext = Depends(current_user)):
+def list_review_runs(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.list_runs(task_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -516,7 +526,7 @@ def list_review_table(
     missing: bool | None = None,
     limit: int = 100,
     offset: int = 0,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_review_service.table(
@@ -537,7 +547,7 @@ def list_review_table(
 
 
 @router.get("/tasks/{task_id}/review/summary")
-def get_review_summary(task_id: str, run_id: str | None = None, user: UserContext = Depends(current_user)):
+def get_review_summary(task_id: str, run_id: str | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_multimodal_review_service.summary(task_id, run_id=run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -551,7 +561,7 @@ def list_review_queue(
     queue: str = "all",
     limit: int = 100,
     offset: int = 0,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_multimodal_review_service.queue(
@@ -567,7 +577,7 @@ def list_review_queue(
 
 
 @router.get("/tasks/{task_id}/review/records/{record_id}")
-def get_review_record(task_id: str, record_id: str, run_id: str | None = None, user: UserContext = Depends(current_user)):
+def get_review_record(task_id: str, record_id: str, run_id: str | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.record(task_id, record_id, run_id=run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -575,7 +585,7 @@ def get_review_record(task_id: str, record_id: str, run_id: str | None = None, u
 
 
 @router.get("/tasks/{task_id}/review/records/{record_id}/events")
-def list_review_events(task_id: str, record_id: str, user: UserContext = Depends(current_user)):
+def list_review_events(task_id: str, record_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.events(task_id, record_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -583,7 +593,7 @@ def list_review_events(task_id: str, record_id: str, user: UserContext = Depends
 
 
 @router.post("/tasks/{task_id}/review/records/{record_id}/fields/{field_key}/accept")
-def accept_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_user)):
+def accept_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.accept_field(task_id, record_id, field_key, payload or ReviewFieldActionRequest(), user=user)
     except Exception as exc:  # noqa: BLE001
@@ -591,7 +601,7 @@ def accept_review_field(task_id: str, record_id: str, field_key: str, payload: R
 
 
 @router.post("/tasks/{task_id}/review/records/{record_id}/fields/{field_key}/edit")
-def edit_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldEditRequest, user: UserContext = Depends(current_user)):
+def edit_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldEditRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.edit_field(task_id, record_id, field_key, payload, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -599,7 +609,7 @@ def edit_review_field(task_id: str, record_id: str, field_key: str, payload: Rev
 
 
 @router.post("/tasks/{task_id}/review/records/{record_id}/fields/{field_key}/reject")
-def reject_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_user)):
+def reject_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.reject_field(task_id, record_id, field_key, payload or ReviewFieldActionRequest(), user=user)
     except Exception as exc:  # noqa: BLE001
@@ -607,7 +617,7 @@ def reject_review_field(task_id: str, record_id: str, field_key: str, payload: R
 
 
 @router.post("/tasks/{task_id}/review/records/{record_id}/fields/{field_key}/lock")
-def lock_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_user)):
+def lock_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.lock_field(task_id, record_id, field_key, payload or ReviewFieldActionRequest(), user=user)
     except Exception as exc:  # noqa: BLE001
@@ -615,7 +625,7 @@ def lock_review_field(task_id: str, record_id: str, field_key: str, payload: Rev
 
 
 @router.post("/tasks/{task_id}/review/records/{record_id}/fields/{field_key}/unlock")
-def unlock_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_user)):
+def unlock_review_field(task_id: str, record_id: str, field_key: str, payload: ReviewFieldActionRequest | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.unlock_field(task_id, record_id, field_key, payload or ReviewFieldActionRequest(), user=user)
     except Exception as exc:  # noqa: BLE001
@@ -623,7 +633,7 @@ def unlock_review_field(task_id: str, record_id: str, field_key: str, payload: R
 
 
 @router.post("/tasks/{task_id}/review/events/{event_id}/revert")
-def revert_review_event(task_id: str, event_id: int, user: UserContext = Depends(current_user)):
+def revert_review_event(task_id: str, event_id: int, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.revert_event(task_id, event_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -631,7 +641,7 @@ def revert_review_event(task_id: str, event_id: int, user: UserContext = Depends
 
 
 @router.post("/tasks/{task_id}/review/bulk")
-def bulk_review_action(task_id: str, payload: ReviewBulkRequest, user: UserContext = Depends(current_user)):
+def bulk_review_action(task_id: str, payload: ReviewBulkRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_review_service.bulk(task_id, payload, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -643,7 +653,7 @@ def start_multimodal_review_job(
     task_id: str,
     run_id: str,
     payload: MultimodalReviewJobCreateRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_multimodal_review_service.start_job(task_id, run_id, payload or MultimodalReviewJobCreateRequest(), user=user)
@@ -652,7 +662,7 @@ def start_multimodal_review_job(
 
 
 @router.get("/tasks/{task_id}/review/runs/{run_id}/multimodal-jobs")
-def list_multimodal_review_jobs(task_id: str, run_id: str, user: UserContext = Depends(current_user)):
+def list_multimodal_review_jobs(task_id: str, run_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_multimodal_review_service.list_jobs(task_id, run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -660,7 +670,7 @@ def list_multimodal_review_jobs(task_id: str, run_id: str, user: UserContext = D
 
 
 @router.get("/tasks/{task_id}/review/multimodal-jobs/{job_id}")
-def get_multimodal_review_job(task_id: str, job_id: str, user: UserContext = Depends(current_user)):
+def get_multimodal_review_job(task_id: str, job_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_multimodal_review_service.get_job(task_id, job_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -668,7 +678,7 @@ def get_multimodal_review_job(task_id: str, job_id: str, user: UserContext = Dep
 
 
 @router.post("/tasks/{task_id}/review/multimodal-jobs/{job_id}/cancel")
-def cancel_multimodal_review_job(task_id: str, job_id: str, user: UserContext = Depends(current_user)):
+def cancel_multimodal_review_job(task_id: str, job_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_multimodal_review_service.cancel_job(task_id, job_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -680,7 +690,7 @@ def accept_review_suggestion(
     task_id: str,
     suggestion_id: str,
     payload: ReviewSuggestionActionRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_multimodal_review_service.accept_suggestion(task_id, suggestion_id, payload or ReviewSuggestionActionRequest(), user=user)
@@ -693,7 +703,7 @@ def reject_review_suggestion(
     task_id: str,
     suggestion_id: str,
     payload: ReviewSuggestionActionRequest | None = None,
-    user: UserContext = Depends(current_user),
+    user: UserContext = Depends(current_structured_user),
 ):
     try:
         return structured_extraction_multimodal_review_service.reject_suggestion(task_id, suggestion_id, payload or ReviewSuggestionActionRequest(), user=user)
@@ -702,7 +712,7 @@ def reject_review_suggestion(
 
 
 @router.post("/tasks/{task_id}/review/suggestions/bulk")
-def bulk_review_suggestions(task_id: str, payload: ReviewSuggestionBulkRequest, user: UserContext = Depends(current_user)):
+def bulk_review_suggestions(task_id: str, payload: ReviewSuggestionBulkRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_multimodal_review_service.bulk_suggestions(task_id, payload, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -710,7 +720,7 @@ def bulk_review_suggestions(task_id: str, payload: ReviewSuggestionBulkRequest, 
 
 
 @router.get("/tasks/{task_id}/exports/preview")
-def preview_export(task_id: str, run_id: str | None = None, user: UserContext = Depends(current_user)):
+def preview_export(task_id: str, run_id: str | None = None, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_export_service.preview(task_id, run_id=run_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -718,7 +728,7 @@ def preview_export(task_id: str, run_id: str | None = None, user: UserContext = 
 
 
 @router.post("/tasks/{task_id}/exports")
-def create_export(task_id: str, payload: ExportCreateRequest, user: UserContext = Depends(current_user)):
+def create_export(task_id: str, payload: ExportCreateRequest, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_export_service.create(task_id, payload, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -726,7 +736,7 @@ def create_export(task_id: str, payload: ExportCreateRequest, user: UserContext 
 
 
 @router.get("/tasks/{task_id}/exports")
-def list_exports(task_id: str, user: UserContext = Depends(current_user)):
+def list_exports(task_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_export_service.list_exports(task_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -734,7 +744,7 @@ def list_exports(task_id: str, user: UserContext = Depends(current_user)):
 
 
 @router.get("/tasks/{task_id}/exports/{export_id}")
-def get_export(task_id: str, export_id: str, user: UserContext = Depends(current_user)):
+def get_export(task_id: str, export_id: str, user: UserContext = Depends(current_structured_user)):
     try:
         return structured_extraction_export_service.get(task_id, export_id, user=user)
     except Exception as exc:  # noqa: BLE001
@@ -742,7 +752,7 @@ def get_export(task_id: str, export_id: str, user: UserContext = Depends(current
 
 
 @router.get("/tasks/{task_id}/exports/{export_id}/download")
-def download_export(task_id: str, export_id: str, format: str, user: UserContext = Depends(current_user)):  # noqa: A002
+def download_export(task_id: str, export_id: str, format: str, user: UserContext = Depends(current_structured_user)):  # noqa: A002
     try:
         path, media_type = structured_extraction_export_service.download_path(task_id, export_id, format, user=user)
         return FileResponse(path, media_type=media_type, filename=path.name)

@@ -27,11 +27,11 @@ def needs_translation(text: str | None) -> bool:
     return any(ord(ch) > 127 for ch in (text or ""))
 
 
-def _default_llm():
+def _default_llm(user_id: str | None = None):
     from core.settings_store import settings_store
     from core.llm.client import build_llm_client
 
-    return build_llm_client(settings_store)
+    return build_llm_client(settings_store, user_id=user_id)
 
 
 async def _translate(llm, text: str) -> str:
@@ -48,7 +48,7 @@ async def _translate(llm, text: str) -> str:
     return out.splitlines()[0].strip() if out else ""
 
 
-def to_search_query(topic: str | None, llm_factory=None) -> str:
+def to_search_query(topic: str | None, llm_factory=None, *, user_id: str | None = None) -> str:
     """Return an English search query for ``topic``.
 
     ASCII topics pass through unchanged. Non-ASCII topics are translated via the
@@ -57,7 +57,7 @@ def to_search_query(topic: str | None, llm_factory=None) -> str:
     if not needs_translation(topic):
         return topic
     try:
-        llm = (llm_factory or _default_llm)()
+        llm = llm_factory() if llm_factory is not None else _default_llm(user_id)
         translated = asyncio.run(_translate(llm, topic))
         return translated or topic
     except Exception:  # noqa: BLE001 - degrade to the original direction

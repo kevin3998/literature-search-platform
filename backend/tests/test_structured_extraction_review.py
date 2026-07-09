@@ -47,8 +47,8 @@ def _client_with_completed_run(monkeypatch, tmp_path):
 
     import modules.structured_extraction.llm_extraction as llm_extraction
 
-    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False: fake)
-    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
+    monkeypatch.setattr(llm_extraction, "build_llm_client", lambda _settings_store, strong=False, user_id=None: fake)
+    monkeypatch.setattr(llm_extraction.settings_store, "model_config", lambda user_id=None: {"provider": "fake", "chat_model": "weak", "strong_model": "strong"})
     started = client.post(f"/api/structured-extraction/tasks/{task_id}/runs", headers={"X-User-Id": "alice"}).json()
     final = _wait_for_terminal(client, task_id, started["run_id"])
     assert final["status"] == "completed"
@@ -163,7 +163,7 @@ def test_review_table_initializes_quality_flags_and_manual_overlay(monkeypatch, 
     assert missing.json()["total"] == 1
 
     task = client.get(f"/api/structured-extraction/tasks/{task_id}", headers={"X-User-Id": "alice"}).json()
-    audit = root / "users" / "alice" / task["workspace_rel_path"] / "audit"
+    audit = root / "users" / task["user_id"] / task["workspace_rel_path"] / "audit"
     assert (audit / "review_events.jsonl").exists()
     assert (audit / f"review_field_states_{run_id}.jsonl").exists()
     assert (audit / f"effective_records_{run_id}.jsonl").exists()

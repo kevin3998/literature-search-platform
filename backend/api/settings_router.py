@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.settings_store import settings_store
+from core.user_context import UserContext, current_user
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -66,93 +67,93 @@ class ModelProfileUpdate(BaseModel):
 
 
 @router.get("")
-def get_settings():
-    return settings_store.get_settings()
+def get_settings(user: UserContext = Depends(current_user)):
+    return settings_store.get_settings(user_id=user.user_id)
 
 
 @router.patch("")
-def patch_settings(payload: SettingsPatchRequest):
-    return settings_store.patch(payload.model_dump())
+def patch_settings(payload: SettingsPatchRequest, user: UserContext = Depends(current_user)):
+    return settings_store.patch(payload.model_dump(), user_id=user.user_id)
 
 
 @router.get("/effective")
-def effective_settings():
-    return settings_store.effective()
+def effective_settings(user: UserContext = Depends(current_user)):
+    return settings_store.effective(user_id=user.user_id)
 
 
 @router.get("/diagnostics")
-def diagnostics():
-    return settings_store.diagnostics()
+def diagnostics(user: UserContext = Depends(current_user)):
+    return settings_store.diagnostics(user_id=user.user_id)
 
 
 @router.get("/readiness")
-def readiness():
+def readiness(user: UserContext = Depends(current_user)):
     """Structured agent runtime-readiness contract (why Ready / Not Ready + fallback)."""
-    return settings_store.readiness()
+    return settings_store.readiness(user_id=user.user_id)
 
 
 @router.post("/models/test")
-def test_model(payload: ModelTestRequest):
-    return settings_store.test_model(payload.model_dump(exclude_none=True))
+def test_model(payload: ModelTestRequest, user: UserContext = Depends(current_user)):
+    return settings_store.test_model(payload.model_dump(exclude_none=True), user_id=user.user_id)
 
 
 @router.post("/models/secret")
-def set_model_secret(payload: ModelSecretRequest):
+def set_model_secret(payload: ModelSecretRequest, user: UserContext = Depends(current_user)):
     """Store a provider API key, encrypted at rest. Never echoes the key back."""
     from core.secret_store import secret_store
 
     if payload.provider == "none":
         raise HTTPException(status_code=400, detail="选择一个具体的 provider 再保存密钥")
-    secret_store.set(payload.provider, payload.api_key)
+    secret_store.set(payload.provider, payload.api_key, user_id=user.user_id)
     return {
         "configured": True,
         "provider": payload.provider,
-        "source": settings_store.api_key_source(payload.provider),
+        "source": settings_store.api_key_source(payload.provider, user_id=user.user_id),
     }
 
 
 @router.delete("/models/secret")
-def delete_model_secret(payload: ModelSecretDeleteRequest):
+def delete_model_secret(payload: ModelSecretDeleteRequest, user: UserContext = Depends(current_user)):
     from core.secret_store import secret_store
 
-    removed = secret_store.delete(payload.provider)
+    removed = secret_store.delete(payload.provider, user_id=user.user_id)
     return {
         "removed": removed,
         "provider": payload.provider,
-        "source": settings_store.api_key_source(payload.provider),
+        "source": settings_store.api_key_source(payload.provider, user_id=user.user_id),
     }
 
 
 @router.post("/external-sources/secret")
-def set_external_source_secret(payload: ExternalSourceSecretRequest):
+def set_external_source_secret(payload: ExternalSourceSecretRequest, user: UserContext = Depends(current_user)):
     from core.secret_store import secret_store
 
     allowed = {"semantic_scholar", "exa", "openalex"}
     if payload.source not in allowed:
         raise HTTPException(status_code=400, detail="不支持的外部源")
-    secret_store.set(f"external:{payload.source}", payload.api_key)
+    secret_store.set(f"external:{payload.source}", payload.api_key, user_id=user.user_id)
     return {
         "configured": True,
         "source": payload.source,
-        "key_source": settings_store.external_source_key_source(payload.source),
+        "key_source": settings_store.external_source_key_source(payload.source, user_id=user.user_id),
     }
 
 
 @router.delete("/external-sources/secret")
-def delete_external_source_secret(payload: ExternalSourceSecretDeleteRequest):
+def delete_external_source_secret(payload: ExternalSourceSecretDeleteRequest, user: UserContext = Depends(current_user)):
     from core.secret_store import secret_store
 
-    removed = secret_store.delete(f"external:{payload.source}")
+    removed = secret_store.delete(f"external:{payload.source}", user_id=user.user_id)
     return {
         "removed": removed,
         "source": payload.source,
-        "key_source": settings_store.external_source_key_source(payload.source),
+        "key_source": settings_store.external_source_key_source(payload.source, user_id=user.user_id),
     }
 
 
 @router.post("/reset")
-def reset_settings(payload: ResetRequest):
-    return settings_store.reset(payload.scope)
+def reset_settings(payload: ResetRequest, user: UserContext = Depends(current_user)):
+    return settings_store.reset(payload.scope, user_id=user.user_id)
 
 
 # --- model credential profiles -------------------------------------------------
@@ -165,67 +166,73 @@ def _profiles():
 
 
 @router.get("/model-profiles")
-def list_model_profiles():
-    return _profiles().list()
+def list_model_profiles(user: UserContext = Depends(current_user)):
+    return _profiles().list(user_id=user.user_id)
 
 
 @router.post("/model-profiles")
-def create_model_profile(payload: ModelProfileCreate):
+def create_model_profile(payload: ModelProfileCreate, user: UserContext = Depends(current_user)):
     return _profiles().create(
         name=payload.name,
         provider=payload.provider,
         base_url=payload.base_url,
         model=payload.model,
         api_key=payload.api_key,
+        user_id=user.user_id,
     )
 
 
 @router.patch("/model-profiles/{profile_id}")
-def update_model_profile(profile_id: str, payload: ModelProfileUpdate):
+def update_model_profile(profile_id: str, payload: ModelProfileUpdate, user: UserContext = Depends(current_user)):
     try:
-        return _profiles().update(profile_id, **payload.model_dump(exclude_unset=True))
+        return _profiles().update(profile_id, user_id=user.user_id, **payload.model_dump(exclude_unset=True))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/model-profiles/{profile_id}")
-def delete_model_profile(profile_id: str):
+def delete_model_profile(profile_id: str, user: UserContext = Depends(current_user)):
     try:
-        _profiles().delete(profile_id)
+        _profiles().delete(profile_id, user_id=user.user_id)
         return {"removed": True, "id": profile_id}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/model-profiles/{profile_id}/activate")
-def activate_model_profile(profile_id: str):
+def activate_model_profile(profile_id: str, user: UserContext = Depends(current_user)):
     try:
-        return _profiles().activate(profile_id)
+        return _profiles().activate(profile_id, user_id=user.user_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/model-profiles/{profile_id}/reveal")
-def reveal_model_profile(profile_id: str):
-    """The ONLY endpoint that returns a plaintext key — used for explicit view/copy."""
+def reveal_model_profile(profile_id: str, user: UserContext = Depends(current_user)):
+    """Return only safe secret metadata; M2 does not expose stored plaintext keys via API."""
     try:
-        return {"id": profile_id, "api_key": _profiles().reveal(profile_id)}
+        profile = _profiles().get(profile_id, user_id=user.user_id)
+        return {
+            "id": profile_id,
+            "configured": bool(profile["has_key"]),
+            "key_masked": profile["key_masked"],
+        }
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/model-profiles/{profile_id}/test")
-def test_model_profile(profile_id: str):
+def test_model_profile(profile_id: str, user: UserContext = Depends(current_user)):
     from core.llm.client import test_chat_completion
 
     store = _profiles()
     try:
-        profile = store.get(profile_id)
+        profile = store.get(profile_id, user_id=user.user_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not profile["model"]:
         return {"available": False, "provider": profile["provider"], "message": "未配置模型，无法测试。"}
-    api_key = store.reveal(profile_id)
+    api_key = store.reveal(profile_id, user_id=user.user_id)
     if not api_key:
         return {"available": False, "provider": profile["provider"], "message": "该配置未保存密钥。"}
     return test_chat_completion(

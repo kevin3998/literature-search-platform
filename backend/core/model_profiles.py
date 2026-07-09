@@ -1,71 +1,73 @@
-"""Named model credential profiles.
+"""Per-user PostgreSQL model credential profiles."""
 
-Each profile bundles a display name + provider/base_url/model + an API key, so a
-user can manage several models (e.g. multiple relay keys) in one table and pick
-which one drives the agent via `activate()`. Non-secret fields live in the
-otherwise-unused `settings_profiles` table; the API key is encrypted in
-`secret_store` under the id `cred:<profile_id>`.
-
-Security: `list()` only ever returns a masked preview (`sk-abc...wxyz`). The
-plaintext key is returned solely by `reveal()`, which the dedicated reveal
-endpoint calls on an explicit user action.
-"""
 from __future__ import annotations
 
-import uuid
-from pathlib import Path
 from typing import Any
 
-from core.memory_db import connect, dumps, loads, now
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+
+from core.db.engine import create_engine_from_env
+from core.db.types import json_loads, new_uuid, to_unix_seconds, utc_now, uuid_value
 
 _CRED_PREFIX = "cred:"
-# Provider/base_url get mirrored into the `models` settings scope on activate so
-# the existing LLM/diagnostics wiring keeps reading one source of truth.
-_MIRRORED_KEYS = {"provider": "provider", "base_url": "base_url", "model": "chat_model"}
 
 
 class ModelProfileStore:
-    def __init__(self, db_path: str | Path | None = None, secret_store=None) -> None:
-        self.conn = connect(db_path)
+    def __init__(self, db_path: str | None = None, secret_store=None, engine: Engine | None = None) -> None:
+        self.db_path = db_path
+        self.engine = engine or create_engine_from_env()
         if secret_store is None:
             from core.secret_store import secret_store as default_store
 
             secret_store = default_store
         self.secrets = secret_store
 
-    # --- queries ----------------------------------------------------------------
+    def list(self, *, user_id: str | None = None) -> list[dict[str, Any]]:
+        owner = _user_id(user_id)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text("select * from model_profiles where user_id = :user_id order by created_at"),
+                {"user_id": uuid_value(owner)},
+            ).mappings().all()
+        return [self._row(row, user_id=owner) for row in rows]
 
-    def list(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "select * from settings_profiles order by created_at",
-        ).fetchall()
-        return [self._row(row) for row in rows]
-
-    def get(self, profile_id: str) -> dict[str, Any]:
-        row = self.conn.execute(
-            "select * from settings_profiles where profile_id = ?", (profile_id,)
-        ).fetchone()
+    def get(self, profile_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        owner = _user_id(user_id)
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("select * from model_profiles where profile_id = :profile_id and user_id = :user_id"),
+                {"profile_id": uuid_value(profile_id), "user_id": uuid_value(owner)},
+            ).mappings().first()
         if not row:
             raise KeyError(f"model profile not found: {profile_id}")
-        return self._row(row)
+        return self._row(row, user_id=owner)
 
-    def active(self) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            "select * from settings_profiles where active = 1 order by updated_at desc limit 1"
-        ).fetchone()
-        return self._row(row) if row else None
+    def active(self, *, user_id: str | None = None) -> dict[str, Any] | None:
+        owner = _user_id(user_id)
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    select * from model_profiles
+                    where user_id = :user_id and active = true
+                    order by updated_at desc
+                    limit 1
+                    """
+                ),
+                {"user_id": uuid_value(owner)},
+            ).mappings().first()
+        return self._row(row, user_id=owner) if row else None
 
-    def active_api_key(self) -> str | None:
-        current = self.active()
+    def active_api_key(self, *, user_id: str | None = None) -> str | None:
+        current = self.active(user_id=user_id)
         if not current:
             return None
-        return self.secrets.get(_CRED_PREFIX + current["id"])
+        return self.secrets.get(_CRED_PREFIX + current["id"], user_id=_user_id(user_id))
 
-    def reveal(self, profile_id: str) -> str | None:
-        self.get(profile_id)  # existence check
-        return self.secrets.get(_CRED_PREFIX + profile_id)
-
-    # --- mutations --------------------------------------------------------------
+    def reveal(self, profile_id: str, *, user_id: str | None = None) -> str | None:
+        self.get(profile_id, user_id=user_id)
+        return self.secrets.get(_CRED_PREFIX + profile_id, user_id=_user_id(user_id))
 
     def create(
         self,
@@ -75,27 +77,37 @@ class ModelProfileStore:
         base_url: str = "",
         model: str = "",
         api_key: str = "",
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        profile_id = f"mp_{uuid.uuid4().hex[:12]}"
-        ts = now()
-        config = {
-            "provider": provider,
-            "base_url": base_url or "",
-            "model": model or "",
-            "key_masked": _mask(api_key),
-            "has_key": bool(api_key),
-        }
-        self.conn.execute(
-            """
-            insert into settings_profiles(profile_id, name, config_json, active, created_at, updated_at)
-            values(?, ?, ?, 0, ?, ?)
-            """,
-            (profile_id, name or provider, dumps(config), ts, ts),
-        )
-        self.conn.commit()
-        if api_key:
-            self.secrets.set(_CRED_PREFIX + profile_id, api_key)
-        return self.get(profile_id)
+        owner = _user_id(user_id)
+        profile_id = new_uuid()
+        secret_id = self.secrets.set(_CRED_PREFIX + profile_id, api_key, user_id=owner) if api_key else None
+        ts = utc_now()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    insert into model_profiles(
+                        profile_id, user_id, secret_id, name, provider, base_url, model,
+                        config_json, active, created_at, updated_at
+                    ) values(
+                        :profile_id, :user_id, :secret_id, :name, :provider, :base_url, :model,
+                        '{}'::jsonb, false, :ts, :ts
+                    )
+                    """
+                ),
+                {
+                    "profile_id": uuid_value(profile_id),
+                    "user_id": uuid_value(owner),
+                    "secret_id": uuid_value(secret_id) if secret_id else None,
+                    "name": name or provider,
+                    "provider": provider,
+                    "base_url": base_url or "",
+                    "model": model or "",
+                    "ts": ts,
+                },
+            )
+        return self.get(profile_id, user_id=owner)
 
     def update(
         self,
@@ -106,87 +118,87 @@ class ModelProfileStore:
         base_url: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        current = self.get(profile_id)
-        config = {
-            "provider": provider if provider is not None else current["provider"],
-            "base_url": base_url if base_url is not None else current["base_url"],
-            "model": model if model is not None else current["model"],
-            "key_masked": current["key_masked"],
-            "has_key": current["has_key"],
-        }
-        if api_key:  # empty string / None => keep existing key
-            self.secrets.set(_CRED_PREFIX + profile_id, api_key)
-            config["key_masked"] = _mask(api_key)
-            config["has_key"] = True
-        self.conn.execute(
-            "update settings_profiles set name = ?, config_json = ?, updated_at = ? where profile_id = ?",
-            (name if name is not None else current["name"], dumps(config), now(), profile_id),
-        )
-        self.conn.commit()
-        if current["active"]:
-            self._mirror_to_models(self.get(profile_id))
-        return self.get(profile_id)
-
-    def delete(self, profile_id: str) -> None:
-        self.get(profile_id)  # existence check
-        self.conn.execute("delete from settings_profiles where profile_id = ?", (profile_id,))
-        self.conn.commit()
-        self.secrets.delete(_CRED_PREFIX + profile_id)
-
-    def activate(self, profile_id: str) -> dict[str, Any]:
-        profile = self.get(profile_id)
-        self.conn.execute("update settings_profiles set active = 0")
-        self.conn.execute(
-            "update settings_profiles set active = 1, updated_at = ? where profile_id = ?",
-            (now(), profile_id),
-        )
-        self.conn.commit()
-        profile = self.get(profile_id)
-        self._mirror_to_models(profile)
-        return profile
-
-    # --- internals --------------------------------------------------------------
-
-    def _mirror_to_models(self, profile: dict[str, Any]) -> None:
-        ts = now()
-        for source_key, settings_key in _MIRRORED_KEYS.items():
-            self.conn.execute(
-                """
-                insert into settings(scope, key, value_json, updated_at)
-                values('models', ?, ?, ?)
-                on conflict(scope, key) do update set
-                    value_json = excluded.value_json, updated_at = excluded.updated_at
-                """,
-                (settings_key, dumps(profile.get(source_key) or ""), ts),
+        owner = _user_id(user_id)
+        current = self.get(profile_id, user_id=owner)
+        secret_id = current.get("secret_id")
+        if api_key:
+            secret_id = self.secrets.set(_CRED_PREFIX + profile_id, api_key, user_id=owner)
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    update model_profiles
+                    set secret_id = :secret_id,
+                        name = :name,
+                        provider = :provider,
+                        base_url = :base_url,
+                        model = :model,
+                        updated_at = :updated_at
+                    where profile_id = :profile_id and user_id = :user_id
+                    """
+                ),
+                {
+                    "secret_id": uuid_value(secret_id) if secret_id else None,
+                    "name": name if name is not None else current["name"],
+                    "provider": provider if provider is not None else current["provider"],
+                    "base_url": base_url if base_url is not None else current["base_url"],
+                    "model": model if model is not None else current["model"],
+                    "updated_at": utc_now(),
+                    "profile_id": uuid_value(profile_id),
+                    "user_id": uuid_value(owner),
+                },
             )
-        self.conn.commit()
+        return self.get(profile_id, user_id=owner)
 
-    def _row(self, row) -> dict[str, Any]:
-        config = loads(row["config_json"], {})
-        has_key = bool(config.get("has_key")) and self.secrets.has(_CRED_PREFIX + row["profile_id"])
+    def delete(self, profile_id: str, *, user_id: str | None = None) -> None:
+        owner = _user_id(user_id)
+        self.get(profile_id, user_id=owner)
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("delete from model_profiles where profile_id = :profile_id and user_id = :user_id"),
+                {"profile_id": uuid_value(profile_id), "user_id": uuid_value(owner)},
+            )
+        self.secrets.delete(_CRED_PREFIX + profile_id, user_id=owner)
+
+    def activate(self, profile_id: str, *, user_id: str | None = None) -> dict[str, Any]:
+        owner = _user_id(user_id)
+        self.get(profile_id, user_id=owner)
+        with self.engine.begin() as conn:
+            conn.execute(text("update model_profiles set active = false where user_id = :user_id"), {"user_id": uuid_value(owner)})
+            conn.execute(
+                text("update model_profiles set active = true, updated_at = :ts where profile_id = :profile_id and user_id = :user_id"),
+                {"ts": utc_now(), "profile_id": uuid_value(profile_id), "user_id": uuid_value(owner)},
+            )
+        return self.get(profile_id, user_id=owner)
+
+    def _row(self, row, *, user_id: str) -> dict[str, Any]:
+        secret_type = _CRED_PREFIX + str(row["profile_id"])
+        has_key = self.secrets.has(secret_type, user_id=user_id)
         return {
-            "id": row["profile_id"],
+            "id": str(row["profile_id"]),
+            "profile_id": str(row["profile_id"]),
+            "secret_id": str(row["secret_id"]) if row["secret_id"] else None,
             "name": row["name"],
-            "provider": config.get("provider") or "",
-            "base_url": config.get("base_url") or "",
-            "model": config.get("model") or "",
-            "key_masked": (config.get("key_masked") or "") if has_key else "",
+            "provider": row["provider"],
+            "base_url": row["base_url"],
+            "model": row["model"],
+            "config": json_loads(row["config_json"], {}),
+            "key_masked": self.secrets.preview(secret_type, user_id=user_id) if has_key else "",
             "has_key": has_key,
             "active": bool(row["active"]),
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
+            "created_at": to_unix_seconds(row["created_at"]),
+            "updated_at": to_unix_seconds(row["updated_at"]),
         }
 
 
-def _mask(key: str | None) -> str:
-    if not key:
-        return ""
-    if len(key) >= 12:
-        return f"{key[:6]}...{key[-4:]}"
-    if len(key) > 4:
-        return f"{key[:2]}...{key[-2:]}"
-    return "****"
+def _user_id(user_id: str | None) -> str:
+    if user_id:
+        return user_id
+    from core.user_store import user_store
+
+    return user_store.ensure_local_user()["user_id"]
 
 
 model_profile_store = ModelProfileStore()

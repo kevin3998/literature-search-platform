@@ -4,11 +4,9 @@ import hashlib
 import json
 import re
 import sqlite3
-import uuid
 from pathlib import Path
 from typing import Any
 
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
 from modules.literature_search.corpus import paper_ref
 from modules.literature_search import literature_search_shared
@@ -24,6 +22,7 @@ from .schemas import (
     CollectionSearchRequest,
 )
 from .store import StructuredExtractionStore
+from .store import dumps, loads, new_uuid, now
 
 DECISIONS = {"candidate", "include", "exclude", "uncertain"}
 MAX_SEARCH_LIMIT = 200
@@ -500,7 +499,7 @@ class StructuredExtractionCollectionService:
             )
             self.store.conn.commit()
             return candidate_id, False
-        candidate_id = f"cand_{uuid.uuid4().hex[:12]}"
+        candidate_id = new_uuid()
         self.store.conn.execute(
             """
             insert into structured_extraction_candidates(

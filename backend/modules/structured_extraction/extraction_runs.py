@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import uuid
 from typing import Any
 
 from core.llm import LLMUnavailable
-from core.memory_db import dumps, loads, now
 from core.user_context import UserContext
+from core.worker.queue import JobQueue
 
 from .artifacts import write_extraction_run
 from .artifacts import write_task_manifest
 from . import llm_extraction
 from .schemas import DEFAULT_TASK_STATS, ExtractionRunResumeRequest, ExtractionRunStartRequest
-from .store import StructuredExtractionStore
+from .store import StructuredExtractionStore, dumps, loads, new_uuid, now
 
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 ACTIVE_STATUSES = {"queued", "running", "cancelling"}
@@ -22,7 +20,7 @@ ACTIVE_STATUSES = {"queued", "running", "cancelling"}
 class StructuredExtractionRunService:
     def __init__(self, store: StructuredExtractionStore) -> None:
         self.store = store
-        self._threads: dict[str, threading.Thread] = {}
+        self.job_queue = JobQueue(self.store.engine)
 
     def start(self, task_id: str, payload: ExtractionRunStartRequest, *, user: UserContext) -> dict[str, Any]:
         task = self.store.get_task(task_id, user_id=user.user_id)
@@ -38,7 +36,7 @@ class StructuredExtractionRunService:
         packet_items = _sort_packet_items(packet_items, prompt_contract)
         if not packet_items:
             raise ValueError("evidence_packet_empty")
-        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        run_id = new_uuid()
         ts = now()
         stats = {
             "packet_item_count": len(packet_items),
@@ -62,7 +60,7 @@ class StructuredExtractionRunService:
                 schema_version,
                 prompt_contract["prompt_contract_version"],
                 packet["packet_version"],
-                dumps(llm_extraction.model_snapshot()),
+                dumps(llm_extraction.model_snapshot(user_id=user.user_id)),
                 dumps(stats),
                 task.get("status"),
                 ts,
@@ -76,7 +74,7 @@ class StructuredExtractionRunService:
                 ) values(?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                 """,
                 (
-                    f"ri_{uuid.uuid4().hex[:12]}",
+                    new_uuid(),
                     run_id,
                     task_id,
                     user.user_id,
@@ -88,10 +86,15 @@ class StructuredExtractionRunService:
             )
         self._event(run_id, task_id, user.user_id, "queued", {"packet_item_count": len(packet_items)}, ts=ts)
         self.store.conn.commit()
+        core_job = self.job_queue.enqueue(
+            "structured.extraction_run",
+            {"task_id": task_id, "run_id": run_id, "user_id": user.user_id},
+            user_id=user.user_id,
+            queue="structured-extraction",
+        )
+        self.store.conn.execute("update structured_extraction_runs set core_job_id = ? where run_id = ?", (core_job["job_id"], run_id))
+        self.store.conn.commit()
         run = self.get(task_id, run_id, user=user)
-        thread = threading.Thread(target=self._worker_entry, args=(task_id, run_id, user.user_id), daemon=True)
-        self._threads[run_id] = thread
-        thread.start()
         return run
 
     def list_runs(self, task_id: str, *, user: UserContext) -> dict[str, Any]:
@@ -144,6 +147,11 @@ class StructuredExtractionRunService:
         run = self.get(task_id, run_id, user=user)
         if run["status"] in TERMINAL_STATUSES:
             return run
+        if run["status"] == "queued":
+            if run.get("core_job_id"):
+                self.job_queue.cancel(run["core_job_id"])
+            self._finalize_cancelled(task_id, run_id, user.user_id)
+            return self.get(task_id, run_id, user=user)
         ts = now()
         self.store.conn.execute(
             "update structured_extraction_runs set status = 'cancelling' where task_id = ? and user_id = ? and run_id = ?",
@@ -151,6 +159,8 @@ class StructuredExtractionRunService:
         )
         self._event(run_id, task_id, user.user_id, "cancelling", {}, ts=ts)
         self.store.conn.commit()
+        if run.get("core_job_id"):
+            self.job_queue.cancel(run["core_job_id"])
         return self.get(task_id, run_id, user=user)
 
     def recovery_status(self, task_id: str, run_id: str, *, user: UserContext) -> dict[str, Any]:
@@ -188,9 +198,14 @@ class StructuredExtractionRunService:
         )
         self._event(run_id, task_id, user.user_id, "resumed", {"reason": payload.reason, "retry_failed_items": payload.retry_failed_items}, ts=ts)
         self.store.conn.commit()
-        thread = threading.Thread(target=self._worker_entry, args=(task_id, run_id, user.user_id), daemon=True)
-        self._threads[run_id] = thread
-        thread.start()
+        core_job = self.job_queue.enqueue(
+            "structured.extraction_run",
+            {"task_id": task_id, "run_id": run_id, "user_id": user.user_id, "resume": True},
+            user_id=user.user_id,
+            queue="structured-extraction",
+        )
+        self.store.conn.execute("update structured_extraction_runs set core_job_id = ? where run_id = ?", (core_job["job_id"], run_id))
+        self.store.conn.commit()
         return self.get(task_id, run_id, user=user)
 
     def reap_orphaned_runs(self) -> list[str]:
@@ -279,7 +294,12 @@ class StructuredExtractionRunService:
         )
         self.store.conn.commit()
         try:
-            prompt, raw, parsed = await llm_extraction.extract_packet_item(task=task, contract=contract, packet_item=packet_item)
+            prompt, raw, parsed = await llm_extraction.extract_packet_item(
+                task=task,
+                contract=contract,
+                packet_item=packet_item,
+                user_id=user.user_id,
+            )
             normalized = _normalize_item_records(parsed, packet_item, contract)
             self.store.conn.execute(
                 """
@@ -363,7 +383,7 @@ class StructuredExtractionRunService:
             paper_id = record["paper_id"]
             per_paper[paper_id] = per_paper.get(paper_id, 0) + 1
             record_index = per_paper[paper_id]
-            record_id = f"rec_{uuid.uuid4().hex[:12]}"
+            record_id = new_uuid()
             out = {
                 "record_id": record_id,
                 "run_id": run_id,
@@ -631,6 +651,7 @@ class StructuredExtractionRunService:
             "interrupted_at": row["interrupted_at"],
             "counted_at": row["counted_at"],
             "recovery": loads(row["recovery_json"], {}) or {},
+            "core_job_id": row["core_job_id"] if "core_job_id" in row.keys() else None,
         }
 
     @staticmethod
