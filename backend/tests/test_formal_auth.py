@@ -190,7 +190,10 @@ def test_cookie_state_change_requires_csrf(monkeypatch):
         csrf_headers = {"X-CSRF-Token": csrf_response.json()["csrf_token"]}
         profile_response = client.patch("/api/account/profile", json={"display_name": "With Token"}, headers=csrf_headers)
         missing_csrf_logout = client.post("/api/auth/logout")
-        logout_response = client.post("/api/auth/logout", headers=csrf_headers)
+        client.cookies.delete("lap_csrf_token")
+        reissued_csrf_response = client.get("/api/auth/csrf")
+        reissued_csrf_headers = {"X-CSRF-Token": reissued_csrf_response.json()["csrf_token"]}
+        logout_response = client.post("/api/auth/logout", headers=reissued_csrf_headers)
 
     assert signup_response.status_code == 200
     assert missing_csrf_profile.status_code == 403
@@ -200,8 +203,49 @@ def test_cookie_state_change_requires_csrf(monkeypatch):
     assert profile_response.json()["display_name"] == "With Token"
     assert missing_csrf_logout.status_code == 403
     assert missing_csrf_logout.json()["detail"] == "csrf failed"
+    assert reissued_csrf_response.status_code == 200
+    assert reissued_csrf_response.json()["csrf_token"].startswith("csrf_")
     assert logout_response.status_code == 200
     assert logout_response.json() == {"ok": True}
+
+
+def test_auth_csrf_reissues_missing_cookie_for_valid_session(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.auth_router import router as auth_router
+    from core.runtime_config import csrf_cookie_name
+
+    class FakeAuthStore:
+        def user_for_session_token(self, session_token: str):
+            if session_token != "session":
+                return None
+            return {
+                "user_id": "user-1",
+                "display_name": "Session User",
+                "status": "active",
+                "email": "session@example.com",
+                "role": "user",
+            }
+
+        def reissue_csrf(self, session_token: str):
+            if session_token == "session":
+                return {"csrf_token": "csrf_reissued", "expires_at": None}
+            return None
+
+    monkeypatch.setenv("AUTH_MODE", "local-password")
+    monkeypatch.setenv("COOKIE_NAME", "lap_reissue_session")
+    monkeypatch.setenv("CSRF_COOKIE_NAME", "lap_reissue_csrf")
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    client = TestClient(app)
+    client.cookies.set("lap_reissue_session", "session")
+
+    response = client.get("/api/auth/csrf")
+
+    assert response.status_code == 200
+    assert response.json() == {"csrf_token": "csrf_reissued"}
+    assert response.cookies[csrf_cookie_name()] == "csrf_reissued"
 
 
 def test_auth_api_signup_me_and_logout(monkeypatch):

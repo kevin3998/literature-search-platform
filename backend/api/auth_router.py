@@ -70,10 +70,18 @@ def me(user: UserContext = Depends(current_user)):
 
 
 @router.get("/csrf")
-def csrf(request: Request, user: UserContext = Depends(current_user)):
+def csrf(request: Request, response: Response, user: UserContext = Depends(current_user)):
     token = request.cookies.get(csrf_cookie_name())
-    if not token:
+    if token:
+        return {"csrf_token": token}
+    session_token = request.cookies.get(session_cookie_name())
+    if not session_token:
         raise HTTPException(status_code=404, detail="csrf token not found")
+    csrf_result = auth_store_module.auth_store.reissue_csrf(session_token)
+    if not csrf_result:
+        raise HTTPException(status_code=404, detail="csrf token not found")
+    _set_csrf_cookie(response, csrf_result)
+    token = csrf_result["csrf_token"]
     return {"csrf_token": token}
 
 
@@ -94,6 +102,22 @@ def _set_auth_cookies(response: Response, login_result: dict) -> None:
     response.set_cookie(
         csrf_cookie_name(),
         login_result["csrf_token"],
+        max_age=max_age,
+        expires=expires,
+        path="/",
+        secure=cookie_secure(),
+        httponly=False,
+        samesite="lax",
+    )
+
+
+def _set_csrf_cookie(response: Response, csrf_result: dict) -> None:
+    max_age = session_ttl_days() * 24 * 60 * 60
+    expires_at = csrf_result.get("expires_at")
+    expires = expires_at if isinstance(expires_at, datetime) else None
+    response.set_cookie(
+        csrf_cookie_name(),
+        csrf_result["csrf_token"],
         max_age=max_age,
         expires=expires,
         path="/",

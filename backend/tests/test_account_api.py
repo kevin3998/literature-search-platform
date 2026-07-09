@@ -133,6 +133,34 @@ def test_account_api_tokens_list_uses_wrapper_contract(monkeypatch):
     assert response.json() == {"tokens": [{"token_id": "token-1", "user_id": "user-1", "name": "CLI"}]}
 
 
+def test_account_write_without_session_cookie_skips_csrf_for_header_auth(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.account_router import router as account_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        validate_csrf_called = False
+
+        def validate_csrf(self, session_token: str, csrf_token: str):
+            self.validate_csrf_called = True
+            return False
+
+        def update_profile(self, user_id: str, **kwargs):
+            return {"user_id": user_id, "display_name": kwargs["display_name"], "avatar_url": kwargs["avatar_url"]}
+
+    fake_store = FakeAuthStore()
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(user_id="user-1", workspace_slug="user-1", auth_mode="dev-header")
+    app.include_router(account_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", fake_store, raising=False)
+
+    response = TestClient(app).patch("/api/account/profile", json={"display_name": "Header User", "avatar_url": None})
+
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Header User"
+    assert fake_store.validate_csrf_called is False
+
+
 def test_account_revoke_path_value_errors_return_400(monkeypatch):
     import core.auth_store as auth_store_module
     from api.account_router import router as account_router

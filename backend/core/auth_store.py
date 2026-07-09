@@ -282,6 +282,36 @@ class AuthStore:
             ).first()
         return row is not None
 
+    def reissue_csrf(self, session_token: str) -> dict[str, Any] | None:
+        if not session_token:
+            return None
+        csrf_token = _new_token("csrf")
+        ts = utc_now()
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    update auth_sessions s
+                    set csrf_token_hash = :csrf_token_hash, last_seen_at = :ts
+                    from users u
+                    where s.user_id = u.user_id
+                        and s.token_hash = :token_hash
+                        and s.revoked_at is null
+                        and s.expires_at > :ts
+                        and u.status = 'active'
+                    returning s.expires_at
+                    """
+                ),
+                {
+                    "token_hash": _hash_token(session_token),
+                    "csrf_token_hash": _hash_token(csrf_token),
+                    "ts": ts,
+                },
+            ).mappings().first()
+        if not row:
+            return None
+        return {"csrf_token": csrf_token, "expires_at": row["expires_at"]}
+
     def get_user(self, user_id: str) -> dict[str, Any] | None:
         with self.engine.connect() as conn:
             row = conn.execute(

@@ -177,6 +177,39 @@ def test_admin_collection_routes_use_wrapper_contracts(monkeypatch):
     assert audit_response.json() == {"audit_events": [{"event_id": "event-1", "event_type": "auth.login"}]}
 
 
+def test_admin_write_without_session_cookie_skips_csrf_for_header_auth(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.admin_router import router as admin_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        validate_csrf_called = False
+
+        def validate_csrf(self, session_token: str, csrf_token: str):
+            self.validate_csrf_called = True
+            return False
+
+        def update_user_admin(self, actor_user_id: str, target_user_id: str, **kwargs):
+            return {"user_id": target_user_id, "status": kwargs["status"]}
+
+    fake_store = FakeAuthStore()
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(
+        user_id="admin-1",
+        workspace_slug="admin-1",
+        role="admin",
+        auth_mode="dev-header",
+    )
+    app.include_router(admin_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", fake_store, raising=False)
+
+    response = TestClient(app).patch("/api/admin/users/user-1", json={"status": "disabled"})
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "user-1", "status": "disabled"}
+    assert fake_store.validate_csrf_called is False
+
+
 def test_admin_path_value_errors_return_400(monkeypatch):
     import core.auth_store as auth_store_module
     from api.admin_router import router as admin_router
