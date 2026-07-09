@@ -191,3 +191,100 @@ def test_account_revoke_path_value_errors_return_400(monkeypatch):
     assert session_response.json()["detail"] == "bad session id"
     assert token_response.status_code == 400
     assert token_response.json()["detail"] == "bad token id"
+
+
+def test_api_token_authenticates_as_user(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.account_router import router as account_router
+    from api.auth_router import router as auth_router
+    from core.auth_store import AuthStore
+
+    with migrated_postgres_schema():
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("COOKIE_NAME", "lap_api_token_session")
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        app.include_router(account_router)
+        client = TestClient(app)
+
+        client.post(
+            "/api/auth/signup",
+            json={"email": "alice@example.com", "display_name": "Alice", "password": "password123"},
+        )
+        csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+        token = client.post(
+            "/api/account/api-tokens",
+            json={"name": "CLI"},
+            headers={"X-CSRF-Token": csrf},
+        ).json()["api_token"]
+
+        client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf})
+        me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert me.status_code == 200, me.text
+    assert me.json()["email"] == "alice@example.com"
+
+
+def test_api_token_resolver_uses_bearer_without_cookie(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.auth_router import router as auth_router
+
+    class FakeAuthStore:
+        def user_for_session_token(self, session_token: str):
+            raise AssertionError("session token should not be consulted without cookie")
+
+        def user_for_api_token(self, token: str):
+            if token != "lap_valid":
+                return None
+            return {
+                "user_id": "user-1",
+                "display_name": "API User",
+                "status": "active",
+                "email": "api@example.com",
+                "role": "user",
+            }
+
+    monkeypatch.setenv("AUTH_MODE", "local-password")
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    response = TestClient(app).get("/api/auth/me", headers={"Authorization": "Bearer lap_valid"})
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "api@example.com"
+
+
+def test_hybrid_api_token_resolver_without_trusted_header(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.auth_router import router as auth_router
+
+    class FakeAuthStore:
+        def user_for_api_token(self, token: str):
+            if token != "lap_hybrid":
+                return None
+            return {
+                "user_id": "hybrid-user",
+                "display_name": "Hybrid API User",
+                "status": "active",
+                "email": "hybrid@example.com",
+                "role": "admin",
+            }
+
+        def user_for_session_token(self, session_token: str):
+            return None
+
+    monkeypatch.setenv("AUTH_MODE", "hybrid")
+    monkeypatch.setenv("TRUSTED_USER_HEADER", "X-Auth-User")
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    response = TestClient(app).get("/api/auth/me", headers={"Authorization": "Bearer lap_hybrid"})
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "hybrid@example.com"
+    assert response.json()["role"] == "admin"

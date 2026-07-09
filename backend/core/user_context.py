@@ -118,13 +118,24 @@ def _local_password_user(request: Request, *, mode: str) -> UserContext:
     from core.runtime_config import session_cookie_name
 
     token = request.cookies.get(session_cookie_name())
-    user = auth_store.user_for_session_token(token or "")
+    user = auth_store.user_for_session_token(token) if token else None
+    if not user:
+        api_token = _bearer_token(request)
+        user = auth_store.user_for_api_token(api_token) if api_token else None
     if not user:
         raise HTTPException(status_code=401, detail="valid session required")
     email = user.get("email")
     subject = str(email or user["user_id"])
     workspace_slug = str(user["user_id"])
     return _context_from_user(user, subject=subject, workspace_slug=workspace_slug, mode=mode)
+
+
+def _bearer_token(request: Request) -> str | None:
+    raw = request.headers.get("authorization") or ""
+    if not raw.lower().startswith("bearer "):
+        return None
+    token = raw.split(" ", 1)[1].strip()
+    return token or None
 
 
 def _context_from_user(user: dict[str, Any], *, subject: str, workspace_slug: str, mode: str) -> UserContext:
