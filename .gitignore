@@ -1,0 +1,28 @@
+.DS_Store
+
+# Local runtime state
+.runtime/
+.superpowers/
+.aris/cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+coverage/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+
+# Logs and process files
+*.log
+*.pid

@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8dad1;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c3c6ba;
+}
+
+:focus-visible {
+  outline: 2px solid #c9842b;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.3s ease-in-out infinite;
+}
+
+/* Indeterminate progress: a slim band that slides across the track for tasks
+   whose exact percentage is not observable (e.g. the single-transaction index
+   refresh). Conveys "running" honestly without faking a percentage. */
+@keyframes indeterminate-bar {
+  0% {
+    left: -40%;
+    width: 40%;
+  }
+  50% {
+    width: 55%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+.progress-indeterminate {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: inherit;
+  animation: indeterminate-bar 1.25s ease-in-out infinite;
+}
+
+.btn-dark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border-radius: 6px;
+  background: #20201d;
+  color: #faf8f0;
+  padding: 0 12px;
+  font-size: 12.5px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.btn-dark:hover {
+  background: #32322e;
+}
+
+.btn-light {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border-radius: 6px;
+  border: 1px solid #d8dad1;
+  background: #fffef8;
+  color: #44443e;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+
+.btn-light:hover {
+  border-color: #c9842b;
+  color: #9a621f;
+}
+
+.form-label {
+  display: block;
+  color: #73736b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10.5px;
+  margin-bottom: 4px;
+}
+
+.form-input {
+  width: 100%;
+  border: 1px solid #d8dad1;
+  border-radius: 6px;
+  background: #fffef8;
+  color: #20201d;
+  font-size: 13px;
+  padding: 7px 8px;
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: #c9842b;
+}
+
+.result-pre {
+  max-height: 70vh;
+  overflow: auto;
+  border-radius: 6px;
+  background: #20201d08;
+  color: #30302b;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 12px;
+}

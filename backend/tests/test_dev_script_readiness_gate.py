@@ -1,0 +1,26 @@
+from pathlib import Path
+
+
+def test_dev_script_uses_deep_readiness_before_marking_backend_ready():
+    script = Path("dev.sh").read_text(encoding="utf-8")
+
+    assert "/api/readiness" in script
+    assert "后端已就绪" not in script.split("/api/readiness", 1)[0]
+
+
+def test_dev_script_checks_structured_extraction_routes_before_marking_ready():
+    script = Path("dev.sh").read_text(encoding="utf-8")
+
+    assert "BACKEND_CONTRACT_PROBE" in script
+    assert "/api/structured-extraction/tasks/__route_probe__/collection/candidates" in script
+    assert "backend_contract_ok" in script
+    assert "后端已就绪" not in script.split("backend_contract_ok", 1)[0]
+
+
+def test_dev_script_restarts_backend_instead_of_reusing_existing_listener():
+    script = Path("dev.sh").read_text(encoding="utf-8")
+
+    assert "backend_reused" not in script
+    assert "检测到已有后端进程，正在停止" in script
+    assert "检测到已有可用后端，复用" not in script
+    assert "stop_existing_backend" in script
