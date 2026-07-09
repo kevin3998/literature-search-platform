@@ -6,3 +6,6 @@ python-multipart==0.0.9
 # removed `proxies` kwarg and crash on client construction).
 openai>=1.55.3
 cryptography>=42.0.0
+SQLAlchemy>=2.0,<3
+alembic>=1.13,<2
+psycopg[binary]>=3.1,<4
