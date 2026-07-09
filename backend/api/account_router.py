@@ -55,12 +55,15 @@ def list_sessions(user: UserContext = Depends(current_user)):
 
 @router.delete("/sessions/{session_id}")
 def revoke_session(session_id: str, user: UserContext = Depends(current_user)):
-    return {"ok": auth_store_module.auth_store.revoke_session(user.user_id, session_id)}
+    try:
+        return {"ok": auth_store_module.auth_store.revoke_session(user.user_id, session_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api-tokens")
 def list_api_tokens(user: UserContext = Depends(current_user)):
-    return auth_store_module.auth_store.list_api_tokens(user.user_id)
+    return {"tokens": auth_store_module.auth_store.list_api_tokens(user.user_id)}
 
 
 @router.post("/api-tokens")
@@ -73,7 +76,10 @@ def create_api_token(payload: ApiTokenCreateRequest, user: UserContext = Depends
 
 @router.delete("/api-tokens/{token_id}")
 def revoke_api_token(token_id: str, user: UserContext = Depends(current_user)):
-    return {"ok": auth_store_module.auth_store.revoke_api_token(user.user_id, token_id)}
+    try:
+        return {"ok": auth_store_module.auth_store.revoke_api_token(user.user_id, token_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 __all__ = ["router"]

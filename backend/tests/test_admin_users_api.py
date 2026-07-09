@@ -45,7 +45,7 @@ def test_admin_can_list_update_disable_and_enable_users(monkeypatch):
     assert user_signup.status_code == 200
     assert user_signup.json()["role"] == "user"
     assert users_before.status_code == 200
-    assert {user["email"] for user in users_before.json()} == {"admin@example.com", "bob@example.com"}
+    assert {user["email"] for user in users_before.json()["users"]} == {"admin@example.com", "bob@example.com"}
     assert disable.status_code == 200
     assert disable.json()["status"] == "disabled"
     assert disable.json()["display_name"] == "Disabled Bob"
@@ -135,4 +135,70 @@ def test_admin_reset_password_revoke_targets_and_audit(monkeypatch):
     assert old_login.status_code == 401
     assert new_login.status_code == 200
     assert audit.status_code == 200
-    assert any(event["event_type"] == "admin.reset_password" for event in audit.json())
+    assert any(event["event_type"] == "admin.reset_password" for event in audit.json()["audit_events"])
+
+
+def test_admin_collection_routes_use_wrapper_contracts(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.admin_router import router as admin_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        def list_users(self, query: str = "", limit: int = 100, offset: int = 0):
+            return [{"user_id": "user-1", "email": "admin@example.com"}]
+
+        def list_audit_events(self, limit: int = 100, offset: int = 0):
+            return [{"event_id": "event-1", "event_type": "auth.login"}]
+
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(user_id="admin-1", workspace_slug="admin-1", role="admin")
+    app.include_router(admin_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+    client = TestClient(app)
+
+    users_response = client.get("/api/admin/users")
+    audit_response = client.get("/api/admin/audit-events")
+
+    assert users_response.status_code == 200
+    assert users_response.json() == {"users": [{"user_id": "user-1", "email": "admin@example.com"}]}
+    assert audit_response.status_code == 200
+    assert audit_response.json() == {"audit_events": [{"event_id": "event-1", "event_type": "auth.login"}]}
+
+
+def test_admin_path_value_errors_return_400(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.admin_router import router as admin_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        def update_user_admin(self, actor_user_id: str, target_user_id: str, **kwargs):
+            raise ValueError("bad user id")
+
+        def reset_password_admin(self, actor_user_id: str, target_user_id: str, new_password: str):
+            raise ValueError("bad reset id")
+
+        def revoke_user_sessions_admin(self, actor_user_id: str, target_user_id: str):
+            raise ValueError("bad sessions id")
+
+        def revoke_user_api_tokens_admin(self, actor_user_id: str, target_user_id: str):
+            raise ValueError("bad tokens id")
+
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(user_id="admin-1", workspace_slug="admin-1", role="admin")
+    app.include_router(admin_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    update_response = client.patch("/api/admin/users/not-a-uuid", json={"status": "disabled"})
+    reset_response = client.post("/api/admin/users/not-a-uuid/reset-password", json={"new_password": "password123"})
+    sessions_response = client.post("/api/admin/users/not-a-uuid/revoke-sessions")
+    tokens_response = client.post("/api/admin/users/not-a-uuid/revoke-api-tokens")
+
+    assert update_response.status_code == 400
+    assert update_response.json()["detail"] == "bad user id"
+    assert reset_response.status_code == 400
+    assert reset_response.json()["detail"] == "bad reset id"
+    assert sessions_response.status_code == 400
+    assert sessions_response.json()["detail"] == "bad sessions id"
+    assert tokens_response.status_code == 400
+    assert tokens_response.json()["detail"] == "bad tokens id"

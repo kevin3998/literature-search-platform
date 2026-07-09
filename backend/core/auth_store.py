@@ -16,6 +16,7 @@ from core.runtime_config import enable_signup, session_ttl_days
 
 LOCAL_PASSWORD_PROVIDER = "local-password"
 ADMIN_BOOTSTRAP_ADVISORY_LOCK_ID = 7_157_555_001_001
+ADMIN_MUTATION_ADVISORY_LOCK_ID = 7_157_555_001_002
 VALID_ROLES = {"user", "admin"}
 VALID_STATUSES = {"active", "disabled"}
 
@@ -40,7 +41,7 @@ class AuthStore:
         try:
             with self.engine.begin() as conn:
                 conn.execute(text("select pg_advisory_xact_lock(:lock_id)"), {"lock_id": ADMIN_BOOTSTRAP_ADVISORY_LOCK_ID})
-                has_admin = conn.execute(text("select exists(select 1 from users where role = 'admin')")).scalar_one()
+                has_admin = conn.execute(text("select exists(select 1 from users where role = 'admin' and status = 'active')")).scalar_one()
                 role = "user" if has_admin else "admin"
                 conn.execute(
                     text(
@@ -572,6 +573,8 @@ class AuthStore:
         actor_uuid = uuid_value(actor_user_id)
         target_uuid = uuid_value(target_user_id)
         with self.engine.begin() as conn:
+            if role is not None or status is not None:
+                conn.execute(text("select pg_advisory_xact_lock(:lock_id)"), {"lock_id": ADMIN_MUTATION_ADVISORY_LOCK_ID})
             target = _select_user_for_update(conn, target_uuid)
             if not target:
                 raise ValueError("user not found")

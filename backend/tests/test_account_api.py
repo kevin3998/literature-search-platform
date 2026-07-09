@@ -55,7 +55,7 @@ def test_account_signup_csrf_profile_sessions_and_api_tokens(monkeypatch):
     assert created["name"] == "CLI"
     assert "token_hash" not in created
     assert token_list.status_code == 200
-    listed = token_list.json()
+    listed = token_list.json()["tokens"]
     assert len(listed) == 1
     assert listed[0]["token_id"] == created["token_id"]
     assert listed[0]["token_preview"] == created["token_preview"]
@@ -106,3 +106,50 @@ def test_account_password_change_and_revocations(monkeypatch):
     assert revoke_session.status_code == 200
     assert revoke_session.json() == {"ok": True}
     assert after_revoke.status_code == 401
+
+
+def test_account_api_tokens_list_uses_wrapper_contract(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.account_router import router as account_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        def list_api_tokens(self, user_id: str):
+            return [{"token_id": "token-1", "user_id": user_id, "name": "CLI"}]
+
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(user_id="user-1", workspace_slug="user-1")
+    app.include_router(account_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+
+    response = TestClient(app).get("/api/account/api-tokens")
+
+    assert response.status_code == 200
+    assert response.json() == {"tokens": [{"token_id": "token-1", "user_id": "user-1", "name": "CLI"}]}
+
+
+def test_account_revoke_path_value_errors_return_400(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.account_router import router as account_router
+    from core.user_context import UserContext, current_user
+
+    class FakeAuthStore:
+        def revoke_session(self, user_id: str, session_id: str):
+            raise ValueError("bad session id")
+
+        def revoke_api_token(self, user_id: str, token_id: str):
+            raise ValueError("bad token id")
+
+    app = FastAPI()
+    app.dependency_overrides[current_user] = lambda: UserContext(user_id="user-1", workspace_slug="user-1")
+    app.include_router(account_router)
+    monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    session_response = client.delete("/api/account/sessions/not-a-uuid")
+    token_response = client.delete("/api/account/api-tokens/not-a-uuid")
+
+    assert session_response.status_code == 400
+    assert session_response.json()["detail"] == "bad session id"
+    assert token_response.status_code == 400
+    assert token_response.json()["detail"] == "bad token id"

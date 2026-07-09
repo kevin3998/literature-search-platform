@@ -27,7 +27,7 @@ def require_admin(user: UserContext = Depends(current_user)) -> UserContext:
 
 @router.get("/users")
 def list_users(query: str = "", limit: int = 100, offset: int = 0, user: UserContext = Depends(require_admin)):
-    return auth_store_module.auth_store.list_users(query=query, limit=limit, offset=offset)
+    return {"users": auth_store_module.auth_store.list_users(query=query, limit=limit, offset=offset)}
 
 
 @router.patch("/users/{user_id}")
@@ -55,17 +55,23 @@ def reset_password(user_id: str, payload: AdminResetPasswordRequest, user: UserC
 
 @router.post("/users/{user_id}/revoke-sessions")
 def revoke_sessions(user_id: str, user: UserContext = Depends(require_admin)):
-    return {"revoked": auth_store_module.auth_store.revoke_user_sessions_admin(user.user_id, user_id)}
+    try:
+        return {"revoked": auth_store_module.auth_store.revoke_user_sessions_admin(user.user_id, user_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/users/{user_id}/revoke-api-tokens")
 def revoke_api_tokens(user_id: str, user: UserContext = Depends(require_admin)):
-    return {"revoked": auth_store_module.auth_store.revoke_user_api_tokens_admin(user.user_id, user_id)}
+    try:
+        return {"revoked": auth_store_module.auth_store.revoke_user_api_tokens_admin(user.user_id, user_id)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/audit-events")
 def audit_events(limit: int = 100, offset: int = 0, user: UserContext = Depends(require_admin)):
-    return auth_store_module.auth_store.list_audit_events(limit=limit, offset=offset)
+    return {"audit_events": auth_store_module.auth_store.list_audit_events(limit=limit, offset=offset)}
 
 
 __all__ = ["router"]

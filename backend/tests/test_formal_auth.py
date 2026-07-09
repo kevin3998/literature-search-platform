@@ -58,6 +58,31 @@ def test_signup_bootstraps_admin_when_legacy_non_admin_user_exists():
     assert formal_user["role"] == "admin"
 
 
+def test_signup_bootstraps_admin_when_only_disabled_admin_exists():
+    from sqlalchemy import text
+
+    from core.auth_store import AuthStore
+    from core.db.types import new_uuid, utc_now, uuid_value
+
+    with migrated_postgres_schema():
+        store = AuthStore()
+        ts = utc_now()
+        with store.engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    insert into users(user_id, display_name, status, metadata_json, created_at, updated_at, role)
+                    values(:user_id, 'Disabled Admin', 'disabled', '{}'::jsonb, :ts, :ts, 'admin')
+                    """
+                ),
+                {"user_id": uuid_value(new_uuid()), "ts": ts},
+            )
+
+        formal_user = store.signup(email="replacement-admin@example.com", display_name="Replacement", password="password123")
+
+    assert formal_user["role"] == "admin"
+
+
 def test_login_creates_session_and_validates_cookie_token():
     from core.auth_store import AuthStore
 
