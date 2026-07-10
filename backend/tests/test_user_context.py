@@ -39,7 +39,7 @@ def test_current_user_defaults_to_local_user(monkeypatch) -> None:
         "subject": "local_user",
         "display_name": "local_user",
         "auth_mode": "dev-header",
-        "role": "user",
+        "role": "admin",
         "status": "active",
         "email": None,
     }
@@ -56,7 +56,7 @@ def test_current_user_accepts_valid_header_user(monkeypatch) -> None:
         "subject": "alice.01",
         "display_name": "alice.01",
         "auth_mode": "dev-header",
-        "role": "user",
+        "role": "admin",
         "status": "active",
         "email": None,
     }

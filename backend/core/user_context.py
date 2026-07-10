@@ -110,6 +110,7 @@ def _dev_header_user(x_user_id: str | None, *, mode: str) -> UserContext:
     from core.user_store import DEV_HEADER_PROVIDER, user_store
 
     user = user_store.get_or_create_user_for_subject(provider=DEV_HEADER_PROVIDER, subject=subject)
+    user = {**user, "role": "admin"}
     return _context_from_user(user, subject=subject, workspace_slug=subject, mode=mode)
 
 
