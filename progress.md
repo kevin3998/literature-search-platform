@@ -383,3 +383,16 @@
   - `cd frontend && node --test tests/auth_ui_contract.test.mjs tests/literature_search_store_contract.test.mjs` -> 14 passed.
   - `cd frontend && node --test tests/*.test.mjs` -> 90 passed.
   - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 10
+- Documented formal local login and deployment readiness:
+  - `.env.example` keeps `AUTH_MODE=dev-header` as the development default and adds commented local-password cookie/session settings;
+  - `docs/deployment.md` now describes Formal Local Login, first-admin bootstrap, opaque `lap_session`, CSRF cookie/header, API tokens, and trusted-header as an SSO/reverse-proxy bridge;
+  - `README.md` now points teams to `AUTH_MODE=local-password` for formal browser login and removes the stale local retrieval-summary fallback statement.
+- Verification:
+  - `PYTHONPATH=backend pytest backend/tests/test_auth_config.py backend/tests/test_passwords.py backend/tests/test_formal_auth.py backend/tests/test_account_api.py backend/tests/test_admin_users_api.py backend/tests/test_postgres_migrations.py -q -rs` -> 21 passed, 23 skipped because `TEST_DATABASE_URL` is not configured.
+  - `PYTHONPATH=backend pytest backend/tests/test_postgres_m2_core_runtime.py backend/tests/test_user_context.py backend/tests/test_api_contract_sessions_chat.py backend/tests/test_api_contract_settings_workflow.py -q -rs` -> 10 passed, 5 skipped because `TEST_DATABASE_URL` / `DATABASE_URL` runtime DB coverage is not configured.
+  - Explicit `TEST_DATABASE_URL=postgresql+psycopg://literature_agent:...@127.0.0.1:5432/literature_agent` attempts failed before test logic because local Postgres lacks role `literature_agent`; no app code failure was indicated.
+  - `cd frontend && node --test tests/api_client_contract.test.mjs tests/literature_search_store_contract.test.mjs tests/auth_ui_contract.test.mjs` -> 54 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+- Manual dev-server smoke was not run: existing services already occupy `8000` and `5173`, `dev.sh` would stop the existing backend on `8000`, Vite proxy is fixed to `8000`, and the local test DB role is absent.

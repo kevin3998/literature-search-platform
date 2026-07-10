@@ -116,6 +116,7 @@ agent 模块，也不会创建会话。当前包含：
   PostgreSQL `user_secrets` 中，Fernet 主密钥由 `LITERATURE_SECRET_KEY_PATH` 指向的文件提供。
 - Agent：工具调用 Agent 运行参数（enabled / answer_mode quick|deep /
   max_tool_iterations / tool_budget / enforce_citations）与就绪状态
+- Account：当前登录用户资料、密码修改、浏览器会话和 API Token 管理
 - Research Agent：只读显示 code dir、data dir、memory DB、artifact root 与状态
 - Retrieval：Search/Chat 快速检索默认 retrieval、scope、profile、top_k 等参数
 - Memory：会话上下文窗口、evidence 使用策略与 PostgreSQL 持久化状态
@@ -152,10 +153,10 @@ task_run / run 等底层能力，按需多轮检索，基于证据强制 `[E#]` 
 记忆支持追问。每轮结束会做一次引用校验（虚构引用 / 有证据未引用都会标记
 warning），结果写入该条 assistant 消息的 metadata 并在前端显示「已用证据」。
 
-未配置可用 LLM 时，Chat 自动回退到本地检索摘要，保持离线可用。`agent` 配置项
+未配置可用 LLM 时，文献研究问答会返回可读的配置阻塞诊断，不生成本地检索摘要替代答案。`agent` 配置项
 （`enabled` / `max_tool_iterations` / `tool_budget` / `enforce_citations` /
 `answer_mode`）可在 Settings 中调整；`answer_mode=deep` 会额外开放
-extract / compare / verify_answer / quality 等工具。答案为逐字（token）流式输出。
+extract / compare / verify_answer / quality 等工具。模型可用时，答案为逐字（token）流式输出。
 
 研究记录与导出（可审计）：Chat 顶部「研究记录」按钮打开审计抽屉，按轮展示
 「问题 → 检索 → 证据（含本地 source_path）→ 产物 → 引用校验」的完整链路；
@@ -222,9 +223,10 @@ export LIBRARY_DIR=/path/to/your/literature/folder
 ## 团队部署提示
 
 - PostgreSQL 是平台业务主库；Research Index 仍是只读本地文献索引，不在本阶段迁移。
-- 开发/测试默认 `AUTH_MODE=dev-header`，可用 `X-User-Id` 模拟用户。
-- 生产过渡部署使用 `AUTH_MODE=trusted-header`，由可信反向代理注入
-  `X-Forwarded-User`，后端不能直接暴露给浏览器。
+- 开发/测试可用 `AUTH_MODE=dev-header` 和 `X-User-Id` 模拟用户。
+- 正式本地账号登录使用 `AUTH_MODE=local-password`，浏览器登录态为 httpOnly DB session cookie。
+- 可信反向代理/SSO 过渡可用 `AUTH_MODE=trusted-header`。
+- 生产必须禁止裸露后端可信头入口，且不得使用 `AUTH_MODE=dev-header`。
 - 生产必须显式配置持久化 `LITERATURE_SECRET_KEY_PATH`；没有 Fernet key 时，数据库中的
   加密 API key 无法恢复解密。
 - CORS 通过 `CORS_ALLOW_ORIGINS` 配置；生产推荐同源反向代理。

@@ -1793,7 +1793,7 @@ git commit -m "feat: add account and admin user UI"
 - Modify: `README.md`
 - Possibly modify: `backend/tests/test_platform_readiness.py`
 
-- [ ] **Step 1: Update environment docs**
+- [x] **Step 1: Update environment docs**
 
 Add to `.env.example`:
 
@@ -1813,7 +1813,7 @@ If preserving dev default is preferred for current local workflows, keep `AUTH_M
 # AUTH_MODE=local-password
 ```
 
-- [ ] **Step 2: Update deployment guide**
+- [x] **Step 2: Update deployment guide**
 
 In `docs/deployment.md`, add a "Formal Local Login" section:
 
@@ -1834,7 +1834,7 @@ The first registered account becomes admin. Later accounts are normal users. Bro
 ```
 ```
 
-- [ ] **Step 3: Update README deployment hints**
+- [x] **Step 3: Update README deployment hints**
 
 In `README.md` team deployment notes, replace the current auth bullets with:
 
@@ -1845,7 +1845,7 @@ In `README.md` team deployment notes, replace the current auth bullets with:
 - 生产必须禁止裸露后端可信头入口，且不得使用 `AUTH_MODE=dev-header`。
 ```
 
-- [ ] **Step 4: Run backend verification**
+- [x] **Step 4: Run backend verification**
 
 Run:
 
@@ -1863,7 +1863,7 @@ PYTHONPATH=backend pytest backend/tests/test_postgres_m2_core_runtime.py backend
 
 Expected: PASS or PostgreSQL-dependent tests SKIP if `TEST_DATABASE_URL` is not configured.
 
-- [ ] **Step 5: Run frontend verification**
+- [x] **Step 5: Run frontend verification**
 
 Run:
 
@@ -1875,6 +1875,8 @@ cd frontend && npm run build
 Expected: tests PASS and build succeeds.
 
 - [ ] **Step 6: Manual smoke with dev server**
+
+Note: skipped in this run because ports `8000` and `5173` were already occupied by existing local services, `dev.sh` would stop the existing backend on `8000`, Vite proxy is fixed to `8000`, and the local PostgreSQL on `5432` does not contain the `literature_agent` role needed for isolated DB smoke. Automated backend/frontend verification above was run instead.
 
 Start services in a local auth mode that does not disturb production services:
 
@@ -1896,7 +1898,7 @@ Manual checks:
 9. Create an API token and call GET /api/auth/me with Authorization: Bearer <token>.
 ```
 
-- [ ] **Step 7: Commit docs and verification updates**
+- [x] **Step 7: Commit docs and verification updates**
 
 ```bash
 git add .env.example README.md docs/deployment.md backend/tests/test_platform_readiness.py
