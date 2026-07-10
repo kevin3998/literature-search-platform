@@ -234,6 +234,7 @@ def _flatten_candidates(results: list[dict[str, Any]]) -> list[EvidenceCandidate
                     section_id=ev.get("section_id"),
                     chunk_index=ev.get("chunk_index"),
                     snippet=ev.get("snippet") or ev.get("text"),
+                    expanded_context=ev.get("text"),
                     confidence=ev.get("confidence"),
                     relevance_score=ev.get("score"),
                     source_path=ev.get("source_path"),

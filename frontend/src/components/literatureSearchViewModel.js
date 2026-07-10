@@ -56,9 +56,36 @@ export function evidenceInternalIds(evidence) {
   const ids = [
     ...identityValues(evidence?.evidence_ids || evidence?.evidenceIds),
     ...identityValues(evidence?.source_evidence_id || evidence?.sourceEvidenceId),
+    ...identityValues(evidence?.equivalent_source_evidence_ids || evidence?.equivalentSourceEvidenceIds),
     ...identityValues(evidence?.evidence_id || evidence?.evidenceId),
   ].filter((id) => id && id !== String(alias || ""));
   return [...new Set(ids)];
+}
+
+function evidenceSourceNamespace(evidence) {
+  const explicit = evidence?.source_namespace || evidence?.sourceNamespace;
+  if (explicit) return String(explicit).trim().toLowerCase();
+  const sourceType = String(evidence?.source_type || evidence?.sourceType || "").trim().toLowerCase();
+  if (["pack", "evidence_pack"].includes(sourceType)) return "evidence_pack";
+  if (["", "literature_search", "research_index", "search", "paper_chunks"].includes(sourceType)) {
+    return "research_index";
+  }
+  return sourceType;
+}
+
+export function evidenceIdentityKeys(evidence) {
+  const alias = evidenceCitationAlias(evidence);
+  const namespace = evidenceSourceNamespace(evidence);
+  const sectionId = evidence?.section_id ?? evidence?.sectionId ?? "";
+  const chunkIndex = evidence?.chunk_index ?? evidence?.chunkIndex ?? "";
+  const keys = [
+    ...(alias ? [`alias:${alias}`] : []),
+    ...evidenceInternalIds(evidence).map((id) => `source:${namespace}:${id}`),
+    ...identityValues(evidence?.evidence_item_id || evidence?.evidenceItemId).map((id) => `item:${id}`),
+    ...identityValues(evidence?.source_path || evidence?.sourcePath)
+      .map((path) => `path:${namespace}:${path}|section:${sectionId}|chunk:${chunkIndex}`),
+  ];
+  return [...new Set(keys.filter(Boolean))];
 }
 
 export function latestAssistantMessage(messages = []) {
@@ -118,7 +145,7 @@ export function buildEvidenceItems(session) {
   const items = (citation?.used_evidence || []).map((item, index) => ({
     ...item,
     id: evidenceKey(item) || `evidence_${index + 1}`,
-    ordinal: index + 1,
+    citationAlias: evidenceCitationAlias(item),
   }));
   return withSummary(items, {
     sourceKind: "literature_evidence",
@@ -128,35 +155,37 @@ export function buildEvidenceItems(session) {
 
 function evidenceStatusFromPool(session, evidence) {
   const pool = session?.researchState?.evidence_pool?.recent || [];
-  return pool.find((item) =>
-    item.evidence_item_id === evidence.evidence_item_id ||
-    (item.evidence_id && item.evidence_id === evidence.evidence_id) ||
-    (item.source_path && item.source_path === evidence.source_path)
-  );
+  const identities = new Set(evidenceIdentityKeys(evidence));
+  return pool.find((item) => evidenceIdentityKeys(item).some((key) => identities.has(key)));
 }
 
 export function buildSessionEvidenceItems(session) {
   const current = buildEvidenceItems(session).map((item) => ({ ...item, isCurrent: true }));
-  const currentByKey = new Map(current.map((item) => [evidenceKey(item), item]));
+  const currentByIdentity = new Map();
+  for (const item of current) {
+    for (const key of evidenceIdentityKeys(item)) {
+      if (!currentByIdentity.has(key)) currentByIdentity.set(key, item);
+    }
+  }
   const pool = (session?.researchState?.evidence_pool?.recent || []).map((item, index) => {
     const key = evidenceKey(item) || item.evidence_item_id || `pool_evidence_${index + 1}`;
-    const currentItem = currentByKey.get(key) || current.find((ev) => ev.evidence_id && ev.evidence_id === item.evidence_id);
+    const currentItem = evidenceIdentityKeys(item).map((identity) => currentByIdentity.get(identity)).find(Boolean);
     return {
       ...item,
       ...currentItem,
       ...item,
       id: item.evidence_item_id || key,
       evidenceItemId: item.evidence_item_id || item.evidenceItemId || null,
+      citationAlias: currentItem?.citationAlias || evidenceCitationAlias(item),
       status: item.status || "candidate",
       note: item.note || null,
       isCurrent: !!currentItem,
       sourceKind: "session_evidence_pool",
-      ordinal: index + 1,
     };
   });
-  const pooledKeys = new Set(pool.map((item) => evidenceKey(item)));
+  const pooledKeys = new Set(pool.flatMap((item) => evidenceIdentityKeys(item)));
   const missingCurrent = current
-    .filter((item) => !pooledKeys.has(evidenceKey(item)))
+    .filter((item) => !evidenceIdentityKeys(item).some((key) => pooledKeys.has(key)))
     .map((item, index) => ({
       ...item,
       id: item.evidenceItemId || item.evidence_item_id || item.id || `current_evidence_${index + 1}`,

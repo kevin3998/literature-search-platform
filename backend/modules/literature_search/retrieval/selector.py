@@ -12,6 +12,11 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
+from modules.literature_search.evidence_identity import (
+    evidence_equivalent,
+    evidence_text,
+    normalize_evidence_text,
+)
 from modules.literature_search.retrieval.schemas import EvidenceCandidate, QueryIntent
 
 EVIDENCE_PER_ARTICLE_LIMIT = 3
@@ -101,7 +106,8 @@ def select_evidence(
         )
         scored.append((score, cand))
 
-    scored.sort(key=lambda pair: pair[0], reverse=True)
+    scored.sort(key=_scored_order_key)
+    scored = _dedupe_scored(scored)
 
     # The per-article limit is a HARD cap — overflow evidence from a dominant
     # paper is dropped rather than backfilled, so one paper can never monopolize
@@ -149,3 +155,22 @@ def select_evidence(
                 cand.in_llm_context = True
                 ctx_count += 1
     return selected
+
+
+def _scored_order_key(pair: tuple[float, EvidenceCandidate]) -> tuple[float, int, int, str]:
+    score, candidate = pair
+    dedicated_abstract = int((candidate.kind or "").strip().lower() == "abstract")
+    text_length = len(normalize_evidence_text(evidence_text(candidate)))
+    return (-score, -dedicated_abstract, -text_length, str(candidate.evidence_id))
+
+
+def _dedupe_scored(
+    scored: list[tuple[float, EvidenceCandidate]],
+) -> list[tuple[float, EvidenceCandidate]]:
+    canonical: list[tuple[float, EvidenceCandidate]] = []
+    for pair in scored:
+        candidate = pair[1]
+        if any(evidence_equivalent(candidate, retained[1]) for retained in canonical):
+            continue
+        canonical.append(pair)
+    return canonical

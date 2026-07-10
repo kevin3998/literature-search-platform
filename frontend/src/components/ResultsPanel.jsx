@@ -180,7 +180,7 @@ function EvidenceTab({ items, filter, summary, selectedId, onSelect, onFilter, o
         >
           <div className="flex items-start gap-2">
             <span className="mt-0.5 flex-shrink-0 inline-flex min-w-[22px] h-[20px] items-center justify-center rounded-md bg-amber-50 text-amber-700 text-[11px] font-medium">
-              {citationOrdinalLabel(item.ordinal)}
+              {citationOrdinalLabel(evidenceCitationAlias(item))}
             </span>
             <div className="min-w-0 flex-1">
               <div className="font-serif text-[13.5px] leading-snug text-ink-900 line-clamp-2">

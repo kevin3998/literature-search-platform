@@ -1038,6 +1038,12 @@ def _attach_citation_rows(message: dict, citations: list[dict]) -> None:
     for item in citations:
         paper = item.get("paper_snapshot") or {}
         locator = item.get("source_locator") or {}
+        equivalent_sources = locator.get("equivalent_sources") or []
+        equivalent_ids = []
+        for source in equivalent_sources:
+            evidence_id = str(source.get("evidence_id") or "").strip()
+            if evidence_id and evidence_id not in equivalent_ids:
+                equivalent_ids.append(evidence_id)
         used.append(
             {
                 "alias": item.get("alias"),
@@ -1049,7 +1055,10 @@ def _attach_citation_rows(message: dict, citations: list[dict]) -> None:
                 "year": paper.get("year"),
                 "journal": paper.get("journal"),
                 "paper_id": paper.get("paper_id"),
+                "source_namespace": locator.get("source_namespace"),
                 "source_evidence_id": locator.get("evidence_id"),
+                "equivalent_source_evidence_ids": equivalent_ids,
+                "equivalent_source_locators": equivalent_sources,
                 "section": locator.get("section") or locator.get("section_id"),
                 "section_id": locator.get("section_id"),
                 "chunk_index": locator.get("chunk_index"),

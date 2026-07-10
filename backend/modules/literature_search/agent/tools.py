@@ -262,14 +262,24 @@ class ToolRegistry:
     def _bind_citation_aliases(self, result: ToolResult) -> None:
         if not self.citation_registry or not result.evidence:
             return
-        manifest = self.citation_registry.register_tool_evidence(result.evidence)
-        old_to_alias = {
-            str(item.get("source_locator", {}).get("evidence_id")): item["alias"]
-            for item in manifest
-            if item.get("source_locator", {}).get("evidence_id")
-        }
-        alias_evidence = [item_to_available_evidence(item) for item in manifest]
-        result.evidence = alias_evidence
+        old_to_alias: dict[str, str] = {}
+        registered_aliases: list[str] = []
+        seen_aliases: set[str] = set()
+        for evidence in result.evidence:
+            manifest_item = self.citation_registry.register_evidence(evidence)
+            if manifest_item is None:
+                continue
+            alias = str(manifest_item["alias"])
+            source_id = evidence.get("evidence_id")
+            if source_id:
+                old_to_alias[str(source_id)] = alias
+            if alias not in seen_aliases:
+                seen_aliases.add(alias)
+                registered_aliases.append(alias)
+        result.evidence = [
+            item_to_available_evidence(self.citation_registry.current_manifest[alias])
+            for alias in registered_aliases
+        ]
         result.content = _alias_evidence_ids(result.content, old_to_alias)
 
     def _record_trace(
@@ -405,6 +415,7 @@ class ToolRegistry:
         docs = await _thread(self.service.paper_text_documents, limit=30, **lookup)
         evidence = [
             {
+                "source_namespace": "research_index",
                 "evidence_id": d.get("evidence_id"),
                 "paper_id": d.get("paper_id"),
                 "doi": d.get("doi"),
@@ -416,6 +427,7 @@ class ToolRegistry:
                 "chunk_index": d.get("chunk_index"),
                 "kind": d.get("kind"),
                 "snippet": d.get("snippet"),
+                "canonical_text": d.get("text"),
                 "source_path": d.get("source_path"),
                 "confidence": d.get("confidence"),
             }
@@ -497,9 +509,8 @@ def _restrict_to_selected(papers: list[dict], selected_ids: set) -> list[dict[st
 def _pack_evidence(data: dict) -> list[dict[str, Any]]:
     """Normalize a pack's evidence rows into citable evidence for the audit set.
 
-    Pack ids are local (E1..En) and may coincide numerically with — but are
-    distinct from — search's E{document_id}. Within a turn they coexist in the
-    available set keyed by id; this corpus has no overlap (search ids are large).
+    Pack ids are local (E1..En) and may coincide numerically with search's
+    E{document_id}. Their explicit namespace keeps those physical ids distinct.
     """
     evidence: list[dict[str, Any]] = []
     for item in data.get("evidence") or []:
@@ -507,6 +518,8 @@ def _pack_evidence(data: dict) -> list[dict[str, Any]]:
             continue
         evidence.append(
             {
+                "source_namespace": "evidence_pack",
+                "source_type": "evidence_pack",
                 "evidence_id": item.get("evidence_id"),
                 "paper_id": item.get("paper_id"),
                 "doi": item.get("doi"),
@@ -518,6 +531,7 @@ def _pack_evidence(data: dict) -> list[dict[str, Any]]:
                 "chunk_index": item.get("chunk_index"),
                 "source_path": item.get("source_path"),
                 "snippet": item.get("snippet") or item.get("text"),
+                "canonical_text": item.get("text"),
                 "confidence": item.get("confidence"),
             }
         )
@@ -530,6 +544,7 @@ def _collect_evidence(papers: list[dict]) -> list[dict[str, Any]]:
         for item in paper.get("evidence") or []:
             evidence.append(
                 {
+                    "source_namespace": "research_index",
                     "evidence_id": item.get("evidence_id"),
                     "paper_id": item.get("paper_id") or paper.get("paper_id"),
                     "doi": item.get("doi") or paper.get("doi"),
@@ -543,6 +558,7 @@ def _collect_evidence(papers: list[dict]) -> list[dict[str, Any]]:
                     "chunk_index": item.get("chunk_index"),
                     "source_path": item.get("source_path"),
                     "snippet": item.get("snippet") or item.get("text"),
+                    "canonical_text": item.get("text"),
                     "confidence": item.get("confidence"),
                 }
             )

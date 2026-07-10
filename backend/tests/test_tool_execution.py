@@ -91,6 +91,38 @@ class FakeService:
         return {"assets": []}
 
 
+class CrossToolEvidenceService(FakeService):
+    def search(self, query: str, **options):
+        payload = super().search(query, **options)
+        evidence = payload["results"][0]["evidence"][0]
+        evidence["evidence_id"] = "E42"
+        evidence["snippet"] = "short search snippet"
+        return payload
+
+    def to_chat_papers(self, payload):
+        papers = super().to_chat_papers(payload)
+        papers[0]["evidence"][0]["evidence_id"] = "E42"
+        papers[0]["evidence"][0]["snippet"] = "short search snippet"
+        return papers
+
+    def paper_text_documents(self, *, limit=30, **kwargs):
+        return [
+            {
+                "evidence_id": "E42",
+                "paper_id": "10.1/a",
+                "doi": "10.1/a",
+                "title": "Paper A",
+                "section": "Results",
+                "section_id": "s0004-results",
+                "chunk_index": 1,
+                "kind": "section_chunk",
+                "snippet": "a much longer full-text version of the same physical evidence chunk",
+                "source_path": "articles/a/parsed/fulltext.md",
+                "confidence": "medium",
+            }
+        ]
+
+
 class SlowService(FakeService):
     def evidence_expand(self, **kwargs):
         time.sleep(0.5)
@@ -306,6 +338,23 @@ def test_search_tool_passes_original_question_to_packet(tmp_path):
 
     assert result.content["coverage"]["status"] != "sufficient"
     assert service.acquire_options[-1]["_original_user_query"] == "文献库里有没有关于火星土壤超导材料的论文？"
+
+
+def test_search_and_paper_chunks_reuse_alias_for_same_physical_evidence(tmp_path):
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    reg, _store, _session_id = _registry(tmp_path, CrossToolEvidenceService())
+    reg.citation_registry = CitationRegistry()
+
+    search = asyncio.run(reg.execute("search", {"query": "membranes"}))
+    chunks = asyncio.run(reg.execute("paper_chunks", {"doi": "10.1/a"}))
+
+    assert [item["evidence_id"] for item in search.evidence] == ["1"]
+    assert search.content["papers"][0]["evidence"][0]["evidence_id"] == "1"
+    assert [item["evidence_id"] for item in chunks.evidence] == ["1"]
+    assert chunks.content["chunks"][0]["evidence_id"] == "1"
+    assert len(reg.citation_registry.current_manifest) == 1
+    assert reg.citation_registry.current_manifest["1"]["chunk_text"].startswith("a much longer")
 
 
 def test_tool_exception_is_classified_and_redacted(tmp_path):

@@ -11,6 +11,16 @@ import re
 from collections import OrderedDict
 from typing import Any
 
+from modules.literature_search.evidence_identity import (
+    evidence_equivalent,
+    evidence_text,
+    is_abstract_evidence,
+    normalize_evidence_text,
+    paper_stable_id as canonical_paper_stable_id,
+    physical_evidence_key,
+    source_namespace,
+)
+
 _NUMERIC_CITATION_RE = re.compile(r"[\[【]([0-9]+)[\]】]")
 
 
@@ -23,13 +33,9 @@ def content_hash(text: Any) -> str:
 
 
 def paper_stable_id(evidence: dict[str, Any]) -> str:
-    doi = _clean(evidence.get("doi"))
-    if doi:
-        return f"doi:{doi.lower()}"
-    for key, prefix in (("pmid", "pmid"), ("arxiv_id", "arxiv"), ("paper_id", "paper")):
-        value = _clean(evidence.get(key))
-        if value:
-            return f"{prefix}:{value}"
+    canonical = canonical_paper_stable_id(evidence)
+    if canonical:
+        return canonical
     source = _clean(evidence.get("source_path"))
     title = _clean(evidence.get("title"))
     if source:
@@ -46,14 +52,18 @@ def paper_stable_id(evidence: dict[str, Any]) -> str:
 
 
 def build_evidence_uid(evidence: dict[str, Any]) -> str:
-    text = _chunk_text(evidence)
-    payload = {
-        "source_type": evidence.get("source_type") or "literature_search",
-        "paper_stable_id": paper_stable_id(evidence),
-        "section_id": evidence.get("section_id") or evidence.get("section") or "",
-        "chunk_index": evidence.get("chunk_index"),
-        "content_hash": content_hash(text),
-    }
+    physical_key = physical_evidence_key(evidence)
+    if physical_key:
+        payload = {"physical_key": physical_key}
+    else:
+        text = _chunk_text(evidence)
+        payload = {
+            "source_type": evidence.get("source_type") or "literature_search",
+            "paper_stable_id": paper_stable_id(evidence),
+            "section_id": evidence.get("section_id") or evidence.get("section") or "",
+            "chunk_index": evidence.get("chunk_index"),
+            "content_hash": content_hash(text),
+        }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -69,6 +79,8 @@ class CitationRegistry:
     def __init__(self, historical_citations: list[dict[str, Any]] | None = None) -> None:
         self.current_manifest: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._by_source_key: dict[str, str] = {}
+        self._by_physical_key: dict[str, str] = {}
+        self._abstract_evidence_by_paper: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self.historical_manifest: dict[str, dict[str, Any]] = {}
         for group in historical_citations or []:
             message_id = group.get("message_id")
@@ -80,19 +92,106 @@ class CitationRegistry:
     def register_tool_evidence(self, evidence_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         registered: list[dict[str, Any]] = []
         for item in evidence_items or []:
-            if item.get("in_llm_context") is False:
-                continue
-            source_key = _source_key(item)
-            alias = self._by_source_key.get(source_key)
-            if alias:
-                registered.append(self.current_manifest[alias])
-                continue
-            alias = str(len(self.current_manifest) + 1)
-            snapshot = build_manifest_item(alias, item)
-            self.current_manifest[alias] = snapshot
-            self._by_source_key[source_key] = alias
-            registered.append(snapshot)
+            snapshot = self.register_evidence(item)
+            if snapshot is not None:
+                registered.append(snapshot)
         return registered
+
+    def register_evidence(self, evidence: dict[str, Any]) -> dict[str, Any] | None:
+        if evidence.get("in_llm_context") is False:
+            return None
+
+        physical_key = physical_evidence_key(evidence)
+        alias = self._by_physical_key.get(physical_key or "")
+        matched_physical = bool(alias)
+        source_key = _source_key(evidence)
+        if not alias:
+            alias = self._by_source_key.get(source_key)
+        if not alias and is_abstract_evidence(evidence):
+            paper_key = canonical_paper_stable_id(evidence)
+            for candidate_alias, candidate in self._abstract_evidence_by_paper.get(paper_key or "", []):
+                if evidence_equivalent(evidence, candidate):
+                    alias = candidate_alias
+                    break
+
+        if alias:
+            if matched_physical:
+                self._merge_same_physical(alias, evidence)
+            elif physical_key and physical_key != physical_evidence_key(self._primary_evidence(alias)):
+                self._append_equivalent_source(alias, evidence)
+            self._index_evidence(alias, evidence, source_key=source_key, physical_key=physical_key)
+            return self.current_manifest[alias]
+
+        alias = str(len(self.current_manifest) + 1)
+        self.current_manifest[alias] = build_manifest_item(alias, evidence)
+        self._index_evidence(alias, evidence, source_key=source_key, physical_key=physical_key)
+        return self.current_manifest[alias]
+
+    def _index_evidence(
+        self,
+        alias: str,
+        evidence: dict[str, Any],
+        *,
+        source_key: str,
+        physical_key: str | None,
+    ) -> None:
+        self._by_source_key[source_key] = alias
+        if physical_key:
+            self._by_physical_key[physical_key] = alias
+        if is_abstract_evidence(evidence):
+            paper_key = canonical_paper_stable_id(evidence)
+            if paper_key:
+                rows = self._abstract_evidence_by_paper.setdefault(paper_key, [])
+                existing_index = next(
+                    (index for index, (existing_alias, _) in enumerate(rows) if existing_alias == alias),
+                    None,
+                )
+                if existing_index is None:
+                    rows.append((alias, dict(evidence)))
+                else:
+                    _, representative = rows[existing_index]
+                    same_physical = physical_key and physical_key == physical_evidence_key(representative)
+                    if same_physical and len(normalize_evidence_text(evidence_text(evidence))) > len(
+                        normalize_evidence_text(evidence_text(representative))
+                    ):
+                        rows[existing_index] = (alias, dict(evidence))
+
+    def _merge_same_physical(self, alias: str, evidence: dict[str, Any]) -> None:
+        current = self.current_manifest[alias]
+        incoming = build_manifest_item(alias, evidence)
+        current["paper"] = _fill_missing(current.get("paper") or {}, incoming.get("paper") or {})
+        current["source_locator"] = _fill_missing(current.get("source_locator") or {}, incoming.get("source_locator") or {})
+        for key in ("section", "section_id", "chunk_index", "index_version"):
+            if current.get(key) in (None, "") and incoming.get(key) not in (None, ""):
+                current[key] = incoming[key]
+        if len(normalize_evidence_text(incoming.get("chunk_text"))) > len(normalize_evidence_text(current.get("chunk_text"))):
+            current["chunk_text"] = incoming["chunk_text"]
+            current["chunk_snapshot_hash"] = incoming["chunk_snapshot_hash"]
+            current["display_snippet"] = incoming["display_snippet"]
+
+    def _append_equivalent_source(self, alias: str, evidence: dict[str, Any]) -> None:
+        locator = self.current_manifest[alias].setdefault("source_locator", {})
+        incoming = _source_locator(evidence)
+        primary_key = _locator_key(locator)
+        existing = locator.setdefault("equivalent_sources", [])
+        if _locator_key(incoming) != primary_key and all(_locator_key(item) != _locator_key(incoming) for item in existing):
+            existing.append(incoming)
+
+    def _primary_evidence(self, alias: str) -> dict[str, Any]:
+        item = self.current_manifest[alias]
+        paper = item.get("paper") or {}
+        locator = item.get("source_locator") or {}
+        return {
+            **paper,
+            **locator,
+            "source_namespace": locator.get("source_namespace"),
+            "source_type": locator.get("source_type"),
+            "evidence_id": locator.get("evidence_id"),
+            "section": item.get("section"),
+            "section_id": item.get("section_id"),
+            "chunk_index": item.get("chunk_index"),
+            "snippet": item.get("chunk_text"),
+        }
 
     def available_evidence(self) -> dict[str, dict[str, Any]]:
         return {alias: item_to_available_evidence(item) for alias, item in self.current_manifest.items()}
@@ -197,17 +296,8 @@ def build_manifest_item(alias: str, evidence: dict[str, Any]) -> dict[str, Any]:
         "citation_marker": f"[{alias}]",
         "evidence_uid": evidence_uid,
         "source_type": evidence.get("source_type") or "literature_search",
-        "source_locator": {
-            "source_type": evidence.get("source_type") or "literature_search",
-            "evidence_id": evidence.get("evidence_id"),
-            "document_id": document_id,
-            "paper_id": evidence.get("paper_id"),
-            "article_id": evidence.get("article_id"),
-            "section_id": evidence.get("section_id"),
-            "chunk_index": evidence.get("chunk_index"),
-            "index_version": evidence.get("index_version"),
-            "source_path": evidence.get("source_path"),
-        },
+        "source_namespace": source_namespace(evidence),
+        "source_locator": _source_locator({**evidence, "document_id": document_id}),
         "paper": {
             "paper_id": evidence.get("paper_id"),
             "paper_stable_id": paper_stable_id(evidence),
@@ -229,11 +319,15 @@ def build_manifest_item(alias: str, evidence: dict[str, Any]) -> dict[str, Any]:
 def item_to_available_evidence(item: dict[str, Any]) -> dict[str, Any]:
     paper = item.get("paper") or {}
     locator = item.get("source_locator") or {}
+    equivalent_sources = locator.get("equivalent_sources") or []
     return {
         "evidence_id": str(item.get("alias") or ""),
         "alias": str(item.get("alias") or ""),
         "evidence_uid": item.get("evidence_uid"),
+        "source_namespace": item.get("source_namespace") or locator.get("source_namespace"),
         "source_evidence_id": locator.get("evidence_id"),
+        "equivalent_source_evidence_ids": _dedupe_values(source.get("evidence_id") for source in equivalent_sources),
+        "equivalent_source_locators": equivalent_sources,
         "paper_id": paper.get("paper_id"),
         "doi": paper.get("doi"),
         "title": paper.get("title"),
@@ -319,7 +413,7 @@ def _display_snippet(text: Any, limit: int = 500) -> str:
 
 def _source_key(evidence: dict[str, Any]) -> str:
     keys = [
-        evidence.get("source_type") or "literature_search",
+        source_namespace(evidence),
         evidence.get("evidence_id"),
         evidence.get("paper_id") or evidence.get("doi"),
         evidence.get("section_id") or evidence.get("section"),
@@ -328,6 +422,50 @@ def _source_key(evidence: dict[str, Any]) -> str:
         content_hash(_chunk_text(evidence)),
     ]
     return "|".join("" if key is None else str(key) for key in keys)
+
+
+def _source_locator(evidence: dict[str, Any]) -> dict[str, Any]:
+    document_id = evidence.get("document_id") or _document_id_from_evidence_id(evidence.get("evidence_id"))
+    return {
+        "source_namespace": source_namespace(evidence),
+        "source_type": evidence.get("source_type") or "literature_search",
+        "evidence_id": evidence.get("evidence_id"),
+        "document_id": document_id,
+        "paper_id": evidence.get("paper_id"),
+        "article_id": evidence.get("article_id"),
+        "section": evidence.get("section"),
+        "section_id": evidence.get("section_id"),
+        "chunk_index": evidence.get("chunk_index"),
+        "index_version": evidence.get("index_version"),
+        "source_path": evidence.get("source_path"),
+    }
+
+
+def _locator_key(locator: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        locator.get("source_namespace"),
+        locator.get("evidence_id"),
+        locator.get("source_path"),
+        locator.get("section_id"),
+        locator.get("chunk_index"),
+    )
+
+
+def _fill_missing(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    for key, value in incoming.items():
+        if merged.get(key) in (None, "") and value not in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def _dedupe_values(values) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
 
 
 def _document_id_from_evidence_id(evidence_id: Any) -> int | None:

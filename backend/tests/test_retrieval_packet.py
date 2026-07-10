@@ -166,6 +166,58 @@ def test_selector_boosts_table_for_metric_queries():
     assert selected[0].evidence_id == "E1"  # table_row ranked first
 
 
+def test_selector_removes_equivalent_abstract_sources_before_context_budget():
+    abstract = " ".join(["The abstract reports stable membrane performance under cyclic operation."] * 8)
+    candidates = [
+        EvidenceCandidate(
+            evidence_id="E10",
+            paper_id="P1",
+            doi="10.1/example",
+            kind="abstract",
+            section="Abstract",
+            source_path="articles/example/parsed/abstract.txt",
+            snippet="opening search window from the dedicated abstract",
+            expanded_context=abstract,
+            relevance_score=1.0,
+            confidence=0.8,
+        ),
+        EvidenceCandidate(
+            evidence_id="E11",
+            paper_id="P1",
+            doi="10.1/example",
+            kind="section_chunk",
+            section="Abstract",
+            section_id="s0002-abstract",
+            chunk_index=1,
+            source_path="articles/example/parsed/fulltext.md",
+            snippet="different matched-sentence window from the full text",
+            expanded_context=abstract,
+            relevance_score=0.95,
+            confidence=0.8,
+        ),
+        EvidenceCandidate(
+            evidence_id="E12",
+            paper_id="P1",
+            doi="10.1/example",
+            kind="section_chunk",
+            section="Results",
+            section_id="s0004-results",
+            chunk_index=1,
+            source_path="articles/example/parsed/fulltext.md",
+            snippet="The measured flux remained stable for 100 cycles.",
+            relevance_score=0.9,
+            confidence=0.8,
+        ),
+    ]
+
+    selected = select_evidence(candidates, QueryIntent(type="topic"), context_limit=3)
+
+    assert len(selected) == 2
+    assert "E12" in {candidate.evidence_id for candidate in selected}
+    assert sum(candidate.section == "Abstract" for candidate in selected) == 1
+    assert sum(candidate.in_llm_context for candidate in selected) == 2
+
+
 # --- packet build ---------------------------------------------------------------
 
 def test_packet_preserves_underlying_evidence_id():

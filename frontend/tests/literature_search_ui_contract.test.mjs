@@ -174,6 +174,8 @@ test("literature evidence details include numeric citation aliases", async () =>
 
   assert.match(source, /citation_alias|alias/);
   assert.match(resultsSource, /citation_alias|alias/);
+  assert.match(resultsSource, /citationOrdinalLabel\(evidenceCitationAlias\(item\)\)/);
+  assert.doesNotMatch(resultsSource, /citationOrdinalLabel\(item\.ordinal\)/);
 });
 
 test("app root is protected by an error boundary", async () => {

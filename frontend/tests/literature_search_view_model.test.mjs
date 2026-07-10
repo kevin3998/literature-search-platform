@@ -12,6 +12,7 @@ import {
   buildSuggestedActions,
   detailValueText,
   evidenceCitationAlias,
+  evidenceIdentityKeys,
   evidenceInternalIds,
   findAudit,
   findEvidence,
@@ -181,6 +182,144 @@ test("citation-only evidence remains selectable by numeric alias", () => {
   assert.equal(found.title, "Alias paper");
 });
 
+test("current citation merges with pooled evidence by physical source id", () => {
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+        content: "answer [4]",
+        citation: {
+          used_evidence: [
+            {
+              alias: "4",
+              citation_alias: "4",
+              evidence_id: "4",
+              source_evidence_id: "E42",
+              equivalent_source_evidence_ids: ["E43"],
+              title: "Canonical paper",
+              snippet: "citation snapshot",
+              source_path: "articles/example/parsed/abstract.txt",
+            },
+          ],
+        },
+      },
+    ],
+    researchState: {
+      evidence_pool: {
+        recent: [
+          {
+            evidence_item_id: "evitem_42",
+            evidence_id: "E42",
+            title: "Canonical paper",
+            status: "accepted",
+            source_path: "articles/example/parsed/abstract.txt",
+          },
+        ],
+      },
+    },
+  };
+
+  const items = buildSessionEvidenceItems(session);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].id, "evitem_42");
+  assert.equal(items[0].citationAlias, "4");
+  assert.equal(items[0].isCurrent, true);
+  assert(evidenceIdentityKeys(items[0]).includes("source:research_index:E42"));
+});
+
+test("buildEvidenceItems carries real aliases without synthesizing list ordinals", () => {
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+        citation: {
+          used_evidence: [
+            { alias: "4", source_evidence_id: "E40" },
+            { citation_alias: "9", source_evidence_id: "E90" },
+          ],
+        },
+      },
+    ],
+  };
+
+  const items = buildEvidenceItems(session);
+
+  assert.deepEqual(items.map((item) => item.citationAlias), ["4", "9"]);
+  assert(items.every((item) => !("ordinal" in item)));
+});
+
+test("different fulltext chunks do not merge by source path alone", () => {
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+        citation: {
+          used_evidence: [
+            {
+              alias: "5",
+              evidence_id: "5",
+              source_evidence_id: "E50",
+              section_id: "s0004-results",
+              chunk_index: 1,
+              source_path: "articles/example/parsed/fulltext.md",
+            },
+          ],
+        },
+      },
+    ],
+    researchState: {
+      evidence_pool: {
+        recent: [
+          {
+            evidence_item_id: "evitem_51",
+            evidence_id: "E51",
+            section_id: "s0004-results",
+            chunk_index: 2,
+            source_path: "articles/example/parsed/fulltext.md",
+          },
+        ],
+      },
+    },
+  };
+
+  const items = buildSessionEvidenceItems(session);
+
+  assert.equal(items.length, 2);
+});
+
+test("same physical id from different namespaces does not merge", () => {
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+        citation: {
+          used_evidence: [
+            {
+              alias: "1",
+              source_namespace: "research_index",
+              source_evidence_id: "E1",
+            },
+          ],
+        },
+      },
+    ],
+    researchState: {
+      evidence_pool: {
+        recent: [
+          {
+            evidence_item_id: "pack_e1",
+            source_namespace: "evidence_pack",
+            evidence_id: "E1",
+          },
+        ],
+      },
+    },
+  };
+
+  assert.equal(buildSessionEvidenceItems(session).length, 2);
+});
+
 test("evidence detail helpers tolerate malformed citation identity fields", () => {
   const evidence = {
     alias: "11",
@@ -192,6 +331,10 @@ test("evidence detail helpers tolerate malformed citation identity fields", () =
   assert.equal(evidenceCitationAlias(evidence), "11");
   assert.deepEqual(evidenceInternalIds(evidence), ["E123", "E456", "E789"]);
   assert.equal(detailValueText({ source: "articles/example.md" }), '{"source":"articles/example.md"}');
+});
+
+test("evidence without a citation alias does not invent one", () => {
+  assert.equal(evidenceCitationAlias({ evidence_id: "E123" }), null);
 });
 
 test("buildPaperItems and buildPaperSummary use research state candidate papers", () => {

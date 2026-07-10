@@ -38,11 +38,23 @@ def test_evidence_uid_is_stable_for_same_chunk_text():
     assert first.startswith("ev_")
 
 
-def test_evidence_uid_changes_when_chunk_text_changes():
-    from modules.literature_search.agent.citations import build_evidence_uid
+def test_physical_evidence_uid_does_not_change_with_snippet_window():
+    from modules.literature_search.agent.citations import build_evidence_uid, build_manifest_item
 
     first = build_evidence_uid(_evidence(snippet="Water flux increased to 30."))
     second = build_evidence_uid(_evidence(snippet="Water flux increased to 45."))
+
+    assert first == second
+    assert build_manifest_item("1", _evidence(snippet="Water flux increased to 30."))["chunk_snapshot_hash"] != build_manifest_item(
+        "1", _evidence(snippet="Water flux increased to 45.")
+    )["chunk_snapshot_hash"]
+
+
+def test_content_fallback_evidence_uid_changes_without_physical_id():
+    from modules.literature_search.agent.citations import build_evidence_uid
+
+    first = build_evidence_uid(_evidence(evidence_id=None, document_id=None, snippet="Water flux increased to 30."))
+    second = build_evidence_uid(_evidence(evidence_id=None, document_id=None, snippet="Water flux increased to 45."))
 
     assert first != second
 
@@ -73,6 +85,87 @@ def test_registry_only_aliases_prompt_visible_evidence_and_resolves_answer():
     assert [item["alias"] for item in resolved["used_evidence"]] == ["1"]
     assert len(resolved["resolved_citations"]) == 1
     assert resolved["resolved_citations"][0]["chunk_snapshot_text"] == "visible evidence"
+
+
+def test_registry_reuses_alias_for_same_physical_evidence_and_keeps_longer_snapshot():
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    registry = CitationRegistry()
+    short = registry.register_evidence(_evidence(evidence_id="E42", snippet="short evidence"))
+    long = registry.register_evidence(_evidence(evidence_id="E42", snippet="a much longer version of the same physical evidence chunk"))
+
+    assert short["alias"] == long["alias"] == "1"
+    assert len(registry.current_manifest) == 1
+    assert registry.current_manifest["1"]["chunk_text"] == "a much longer version of the same physical evidence chunk"
+
+
+def test_registry_merges_equivalent_abstract_sources_and_preserves_locators():
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    abstract = " ".join(["The abstract reports stable catalytic conversion under ambient conditions."] * 8)
+    registry = CitationRegistry()
+    first = registry.register_evidence(
+        _evidence(
+            evidence_id="E100",
+            kind="abstract",
+            section="Abstract",
+            section_id=None,
+            chunk_index=None,
+            source_path="articles/example/parsed/abstract.txt",
+            snippet="opening search window from the dedicated abstract",
+            canonical_text=abstract,
+        )
+    )
+    second = registry.register_evidence(
+        _evidence(
+            evidence_id="E101",
+            kind="section_chunk",
+            section="Abstract",
+            section_id="s0002-abstract",
+            chunk_index=1,
+            source_path="articles/example/parsed/fulltext.md",
+            snippet="different matched-sentence window from the full text",
+            canonical_text=abstract,
+        )
+    )
+
+    assert first["alias"] == second["alias"] == "1"
+    locator = registry.current_manifest["1"]["source_locator"]
+    assert locator["evidence_id"] == "E100"
+    assert [item["evidence_id"] for item in locator["equivalent_sources"]] == ["E101"]
+    available = registry.available_evidence()["1"]
+    assert available["source_evidence_id"] == "E100"
+    assert available["equivalent_source_evidence_ids"] == ["E101"]
+
+
+def test_registry_does_not_chain_abstract_similarity_across_equivalent_locators():
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    registry = CitationRegistry()
+    first = registry.register_evidence(
+        _evidence(evidence_id="E200", kind="abstract", section="Abstract", canonical_text="a" * 400)
+    )
+    bridge = registry.register_evidence(
+        _evidence(evidence_id="E201", kind="abstract", section="Abstract", canonical_text="a" * 368 + "b" * 32)
+    )
+    distinct = registry.register_evidence(
+        _evidence(evidence_id="E202", kind="abstract", section="Abstract", canonical_text="a" * 336 + "b" * 64)
+    )
+
+    assert first["alias"] == bridge["alias"] == "1"
+    assert distinct["alias"] == "2"
+
+
+def test_registry_keeps_pack_and_research_index_ids_in_separate_namespaces():
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    registry = CitationRegistry()
+    indexed = registry.register_evidence(_evidence(evidence_id="E1", source_namespace="research_index"))
+    packed = registry.register_evidence(_evidence(evidence_id="E1", source_namespace="evidence_pack"))
+
+    assert indexed["alias"] == "1"
+    assert packed["alias"] == "2"
+    assert len(registry.current_manifest) == 2
 
 
 def test_registry_finalizes_sparse_current_turn_aliases():
@@ -183,5 +276,70 @@ def test_session_store_records_and_returns_message_citations(tmp_path):
 
             context = store.get_context(session["session_id"], user_id=user_id)
             assert context["recent_citations"][0]["citations"][0]["alias"] == "1"
+        finally:
+            engine.dispose()
+
+
+def test_session_store_restores_equivalent_source_evidence_ids():
+    from core.db.engine import engine_for_url
+    from modules.literature_search.agent.citations import CitationRegistry
+
+    user_id = "00000000-0000-0000-0000-000000000002"
+    abstract = " ".join(["The abstract reports stable membrane performance under cyclic operation."] * 8)
+
+    with migrated_postgres_schema() as (url, schema):
+        from core.session_store import SessionStore
+
+        engine = engine_for_url(url, schema=schema)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        insert into users(user_id, display_name, status, metadata_json, created_at, updated_at)
+                        values(:user_id, 'Citation User', 'active', '{}'::jsonb, now(), now())
+                        """
+                    ),
+                    {"user_id": user_id},
+                )
+            store = SessionStore(engine=engine)
+            session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+            turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
+            message_id = store.append(
+                session["session_id"],
+                ChatMessage(role="assistant", content="answer [1]"),
+                turn_id=turn_id,
+                metadata={"citation": {"cited_ids": ["1"]}},
+                user_id=user_id,
+            )
+
+            registry = CitationRegistry()
+            registry.register_evidence(
+                _evidence(
+                    evidence_id="E100",
+                    kind="abstract",
+                    section="Abstract",
+                    section_id=None,
+                    source_path="articles/example/parsed/abstract.txt",
+                    snippet=abstract,
+                )
+            )
+            registry.register_evidence(
+                _evidence(
+                    evidence_id="E101",
+                    kind="section_chunk",
+                    section="Abstract",
+                    section_id="s0002-abstract",
+                    source_path="articles/example/parsed/fulltext.md",
+                    snippet=abstract,
+                )
+            )
+            resolved = registry.resolve_answer("answer [1]")
+            store.record_message_citations(message_id, resolved["resolved_citations"])
+
+            restored = store.messages(session["session_id"], user_id=user_id)[-1]["metadata"]["citation"]["used_evidence"][0]
+            assert restored["source_namespace"] == "research_index"
+            assert restored["source_evidence_id"] == "E100"
+            assert restored["equivalent_source_evidence_ids"] == ["E101"]
         finally:
             engine.dispose()
