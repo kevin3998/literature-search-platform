@@ -15,6 +15,10 @@ class EmptyLLMOutput(RuntimeError):
     pass
 
 
+_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CAMEL_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
+
+
 async def assist_schema(payload: SchemaAssistRequest, *, task: dict[str, Any], user: UserContext) -> dict[str, Any]:
     try:
         llm = build_llm_client(settings_store, user_id=user.user_id)
@@ -80,19 +84,55 @@ def _normalize_result(action: str, data: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_field_tree(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for node in nodes or []:
+    used_keys: set[str] = set()
+    for index, node in enumerate(nodes or [], start=1):
         if not isinstance(node, dict):
             continue
-        key = node.get("key")
+        key = _unique_key(_node_key(node, fallback=f"field_{index}"), used_keys)
         if key in {"paper_id", "material_name"}:
             continue
         item = dict(node)
+        item["key"] = key
+        item["label"] = str(item.get("label") or item.get("name") or key).strip()
         item.pop("unit", None)
         item.pop("example_values", None)
         item.pop("exampleValues", None)
         item["children"] = _normalize_field_tree(item.get("children") or [])
         out.append(item)
     return out
+
+
+def _node_key(node: dict[str, Any], *, fallback: str) -> str:
+    for field in ("key", "name", "label"):
+        key = _slugify_key(node.get(field))
+        if key:
+            return key
+    return fallback
+
+
+def _slugify_key(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^\s*\d+[\).:-]?\s*", "", text)
+    text = _CAMEL_BOUNDARY_RE.sub(r"\1_\2", text)
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").lower()
+    if not text:
+        return ""
+    if not text[0].isalpha():
+        text = f"field_{text}"
+    return text if _KEY_RE.match(text) else ""
+
+
+def _unique_key(key: str, used_keys: set[str]) -> str:
+    base = key or "field"
+    candidate = base
+    suffix = 2
+    while candidate in used_keys:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used_keys.add(candidate)
+    return candidate
 
 
 def _tree_summary(nodes: list[dict[str, Any]]) -> dict[str, int]:
