@@ -1349,7 +1349,7 @@ git commit -m "feat: add frontend auth api client"
 - Modify: `frontend/tests/literature_search_store_contract.test.mjs`
 - Create: `frontend/tests/auth_ui_contract.test.mjs`
 
-- [ ] **Step 1: Write store bootstrap tests**
+- [x] **Step 1: Write store bootstrap tests**
 
 Add to `frontend/tests/literature_search_store_contract.test.mjs`:
 
@@ -1390,7 +1390,7 @@ test("auth bootstrap loads modules when user is authenticated", async () => {
 });
 ```
 
-- [ ] **Step 2: Write UI source contract test**
+- [x] **Step 2: Write UI source contract test**
 
 Create `frontend/tests/auth_ui_contract.test.mjs`:
 
@@ -1410,7 +1410,7 @@ test("auth screen contains login and registration forms", async () => {
 });
 ```
 
-- [ ] **Step 3: Run tests and verify they fail**
+- [x] **Step 3: Run tests and verify they fail**
 
 Run:
 
@@ -1420,7 +1420,7 @@ cd frontend && node --test tests/literature_search_store_contract.test.mjs tests
 
 Expected: FAIL because auth store and `AuthScreen.jsx` do not exist.
 
-- [ ] **Step 4: Add auth state and actions**
+- [x] **Step 4: Add auth state and actions**
 
 Modify import in `frontend/src/store/useAppStore.js`:
 
@@ -1491,7 +1491,7 @@ async authLogout() {
 },
 ```
 
-- [ ] **Step 5: Add AuthScreen component**
+- [x] **Step 5: Add AuthScreen component**
 
 Create `frontend/src/components/AuthScreen.jsx`:
 
@@ -1552,7 +1552,7 @@ export default function AuthScreen() {
 }
 ```
 
-- [ ] **Step 6: Gate App by auth**
+- [x] **Step 6: Gate App by auth**
 
 Modify `frontend/src/App.jsx`:
 
@@ -1581,7 +1581,7 @@ if (authStatus === "login_required") {
 
 Remove the old `loadModules()` startup call from `App.jsx`; `bootstrapAuth()` now calls it after auth succeeds.
 
-- [ ] **Step 7: Run frontend tests and build**
+- [x] **Step 7: Run frontend tests and build**
 
 Run:
 
@@ -1592,7 +1592,7 @@ cd frontend && npm run build
 
 Expected: tests PASS and build succeeds.
 
-- [ ] **Step 8: Commit auth bootstrap task**
+- [x] **Step 8: Commit auth bootstrap task**
 
 ```bash
 git add frontend/src/store/useAppStore.js frontend/src/App.jsx frontend/src/components/AuthScreen.jsx frontend/tests/literature_search_store_contract.test.mjs frontend/tests/auth_ui_contract.test.mjs

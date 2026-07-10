@@ -358,3 +358,16 @@
   - `cd frontend && node --test tests/api_client_contract.test.mjs` -> 40 passed.
   - `cd frontend && node --test tests/*.test.mjs` -> 85 passed.
   - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 8
+- Added frontend auth bootstrap and login/registration gate:
+  - `useAppStore` now owns `currentUser`, `auth.status`, `auth.mode`, `auth.loading`, and `auth.error`;
+  - `bootstrapAuth()` calls `/api/auth/me`, sends authenticated users into `loadModules()`, and leaves unauthenticated users at `login_required` without loading modules;
+  - `authLogin()`, `authSignup()`, and `authLogout()` call the formal auth API client and reset browser app state on logout;
+  - `App.jsx` now checks auth first and renders `AuthScreen` when login is required;
+  - `AuthScreen.jsx` provides compact email/password login and self-service registration with display name.
+- Also made `fetchModules()` and `fetchLibrary()` send `credentials: "include"` so the authenticated startup path carries the DB session cookie.
+- Verification:
+  - `cd frontend && node --test tests/literature_search_store_contract.test.mjs tests/auth_ui_contract.test.mjs` -> 12 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 88 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.

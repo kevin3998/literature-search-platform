@@ -46,13 +46,13 @@ function snakeizeObject(value) {
 }
 
 export async function fetchModules() {
-  const res = await fetch(`${BASE}/modules`);
+  const res = await fetch(`${BASE}/modules`, { credentials: "include" });
   if (!res.ok) throw new Error("加载模块列表失败");
   return res.json();
 }
 
 export async function fetchLibrary() {
-  const res = await fetch(`${BASE}/library`);
+  const res = await fetch(`${BASE}/library`, { credentials: "include" });
   if (!res.ok) throw new Error("加载文献库失败");
   return res.json();
 }

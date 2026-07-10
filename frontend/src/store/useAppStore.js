@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
+import { authApi, corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
 
 // Block 7/10: human-readable status text for the workflow run log.
 const STEP_STATUS_TEXT = { running: "执行中", done: "完成", failed: "失败", blocked: "已阻塞", pending: "待执行", skipped: "已跳过", unavailable: "敬请期待" };
@@ -267,6 +267,13 @@ export const useAppStore = create((set, get) => ({
   modules: [],
   modulesLoaded: false,
   activeModuleId: null,
+  currentUser: null,
+  auth: {
+    status: "checking",
+    mode: "login",
+    error: null,
+    loading: false,
+  },
   appError: null,
 
   setAppError(message) {
@@ -275,6 +282,72 @@ export const useAppStore = create((set, get) => ({
 
   clearAppError() {
     set({ appError: null });
+  },
+
+  async bootstrapAuth() {
+    set((state) => ({ auth: { ...state.auth, status: "checking", error: null, loading: false } }));
+    try {
+      const user = await authApi.me();
+      set((state) => ({ currentUser: user, auth: { ...state.auth, status: "authenticated", error: null, loading: false } }));
+      await get().loadModules();
+    } catch {
+      set((state) => ({
+        currentUser: null,
+        modulesLoaded: true,
+        auth: { ...state.auth, status: "login_required", error: null, loading: false },
+      }));
+    }
+  },
+
+  setAuthMode(mode) {
+    set((state) => ({ auth: { ...state.auth, mode, error: null } }));
+  },
+
+  async authLogin(payload) {
+    set((state) => ({ auth: { ...state.auth, loading: true, error: null } }));
+    try {
+      const user = await authApi.login(payload);
+      set((state) => ({ currentUser: user, auth: { ...state.auth, status: "authenticated", loading: false, error: null } }));
+      await get().loadModules();
+      return user;
+    } catch (e) {
+      set((state) => ({ auth: { ...state.auth, loading: false, error: e.message || "登录失败" } }));
+      return null;
+    }
+  },
+
+  async authSignup(payload) {
+    set((state) => ({ auth: { ...state.auth, loading: true, error: null } }));
+    try {
+      const user = await authApi.signup(payload);
+      set((state) => ({ currentUser: user, auth: { ...state.auth, status: "authenticated", loading: false, error: null } }));
+      await get().loadModules();
+      return user;
+    } catch (e) {
+      set((state) => ({ auth: { ...state.auth, loading: false, error: e.message || "注册失败" } }));
+      return null;
+    }
+  },
+
+  async authLogout() {
+    await authApi.logout().catch(() => {});
+    set({
+      modules: [],
+      modulesLoaded: true,
+      activeModuleId: null,
+      currentUser: null,
+      appError: null,
+      homeOpen: true,
+      workflowOpen: false,
+      structuredExtractionOpen: false,
+      sessionsById: {},
+      sessionOrderByModule: {},
+      activeSessionByModule: {},
+      sessionContextMenu: null,
+      library: [],
+      libraryLoaded: false,
+      auth: { status: "login_required", mode: "login", error: null, loading: false },
+    });
   },
 
   // Research Index Health is the home page shown after startup (Block 0).
