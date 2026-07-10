@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from sqlalchemy import text
 
 from core.session_store import SessionStore
 from modules.literature_search.agent import orchestration as orch
@@ -150,9 +151,27 @@ def test_no_suggestion_when_not_flagged():
 
 def _registry(tmp_path, service, *, answer_mode="quick"):
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     return ToolRegistry(service, store, session_id=session["session_id"], turn_id=turn_id, answer_mode=answer_mode)
+
+
+def _ensure_test_user(store) -> str:
+    user_id = "00000000-0000-4000-8000-000000000202"
+    with store.engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                insert into users(user_id, display_name, status, metadata_json, created_at, updated_at, role)
+                values(:user_id, 'Orchestration Test User', 'active', '{}'::jsonb, now(), now(), 'admin')
+                on conflict(user_id) do update
+                set status = 'active', role = 'admin', updated_at = now()
+                """
+            ),
+            {"user_id": user_id},
+        )
+    return user_id
 
 
 def test_loop_emits_deep_research_suggestion_when_policy_says_so(tmp_path, monkeypatch):
@@ -193,24 +212,37 @@ def test_loop_no_suggestion_in_deep(tmp_path, monkeypatch):
 def test_reused_evidence_flag_when_no_search(tmp_path):
     # No tool call at all → answer straight from injected recent evidence.
     registry = _registry(tmp_path, MultiEvidenceService(), answer_mode="quick")
-    llm = ScriptedLLM([[{"type": "content", "text": "复用上一轮 [E1]"}]])
+    llm = ScriptedLLM([[{"type": "content", "text": "复用上一轮 [1]"}]])
     loop = AgentLoop(llm, registry, grounding_mode="off")
-    memory = {"recent_evidence": [{"evidence_id": "E1", "title": "Prev", "snippet": "..."}]}
+    memory = {
+        "recent_citations": [
+            {
+                "message_id": "m1",
+                "citations": [
+                    {
+                        "alias": "1",
+                        "paper_snapshot": {"title": "Prev"},
+                        "display_snippet": "...",
+                    }
+                ],
+            }
+        ]
+    }
     events = asyncio.run(_collect(loop.run("追问", [], memory)))
     citation = next(e for e in events if e.get("type") == "citation")
     assert citation["reused_evidence"] is True
     assert citation["missing_ids"] == []
-    assert citation["used_evidence"][0]["evidence_id"] == "E1"
+    assert citation["used_evidence"][0]["alias"] == "1"
 
 
 def test_reused_evidence_false_when_searched(tmp_path):
     registry = _registry(tmp_path, MultiEvidenceService(), answer_mode="quick")
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "x"}}],
-        [{"type": "content", "text": "新检索 [E0]"}],
+        [{"type": "content", "text": "新检索 [1]"}],
     ])
     loop = AgentLoop(llm, registry, grounding_mode="off")
-    memory = {"recent_evidence": [{"evidence_id": "E1", "title": "Prev"}]}
+    memory = {"recent_citations": [{"message_id": "m1", "citations": [{"alias": "1", "paper_snapshot": {"title": "Prev"}}]}]}
     events = asyncio.run(_collect(loop.run("新问题", [], memory)))
     citation = next(e for e in events if e.get("type") == "citation")
     assert citation["reused_evidence"] is False

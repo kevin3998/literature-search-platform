@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from typing import AsyncIterator
 
 import pytest
@@ -94,7 +95,7 @@ def test_messages_context_and_chat_stream_contract(monkeypatch, tmp_path):
 
     messages = client.get(f"/api/sessions/{sid}/messages").json()
     assert messages[0]["session_id"] == sid
-    assert messages[0]["turn_id"].startswith("t_")
+    assert uuid.UUID(messages[0]["turn_id"])
     assert {"message_id", "role", "content", "error", "created_at", "metadata"}.issubset(messages[0])
     assert "messageId" not in messages[0]
 

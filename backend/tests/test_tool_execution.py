@@ -3,10 +3,12 @@ job-runner consistency, structured errors, and tool trace."""
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import replace
 
 import pytest
+from sqlalchemy import text
 
 from core.session_store import SessionStore
 from modules.literature_search.agent import tool_errors as te
@@ -162,8 +164,9 @@ class FakeJobRunner:
 
 def _registry(tmp_path, service, *, answer_mode="quick", job_runner=None):
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     reg = ToolRegistry(
         service,
         store,
@@ -173,6 +176,48 @@ def _registry(tmp_path, service, *, answer_mode="quick", job_runner=None):
         job_runner=job_runner,
     )
     return reg, store, session["session_id"]
+
+
+def _ensure_test_user(store) -> str:
+    user_id = "00000000-0000-4000-8000-000000000201"
+    with store.engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                insert into users(user_id, display_name, status, metadata_json, created_at, updated_at, role)
+                values(:user_id, 'Tool Test User', 'active', '{}'::jsonb, now(), now(), 'admin')
+                on conflict(user_id) do update
+                set status = 'active', role = 'admin', updated_at = now()
+                """
+            ),
+            {"user_id": user_id},
+        )
+    return user_id
+
+
+def _tool_traces(store, session_id):
+    def _json_value(value):
+        return json.loads(value or "[]") if isinstance(value, str) else (value or [])
+
+    with store.engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                select * from tool_traces
+                where session_id = :session_id
+                order by completed_at, tool_call_id
+                """
+            ),
+            {"session_id": session_id},
+        ).mappings().all()
+    return [
+        {
+            **dict(row),
+            "artifacts_created": _json_value(row["artifacts_json"]),
+            "jobs_created": _json_value(row["jobs_json"]),
+        }
+        for row in rows
+    ]
 
 
 # --- gating / permissions ------------------------------------------------------
@@ -235,7 +280,7 @@ def test_direct_tool_timeout_produces_trace(tmp_path):
     result = asyncio.run(reg.execute("evidence_expand", {"doi": "10.1/a"}))
     assert result.content["error"]["code"] == te.TIMEOUT
     assert result.content["error"]["retryable"] is True
-    trace = store.build_record(session_id)["turns"][0]["tool_trace"]
+    trace = _tool_traces(store, session_id)
     assert trace and trace[-1]["error_code"] == te.TIMEOUT
     assert trace[-1]["status"] == "error"
 
@@ -294,7 +339,7 @@ def test_job_tool_submits_streams_and_records(tmp_path):
     job_type, payload = runner.submitted[0]
     assert job_type == "run" and payload["session_id"] == session_id and "turn_id" in payload
 
-    trace = store.build_record(session_id)["turns"][0]["tool_trace"][-1]
+    trace = _tool_traces(store, session_id)[-1]
     assert trace["status"] == "ok"
     assert "research_agent/runs/r1.json" in trace["artifacts_created"]
     assert trace["jobs_created"] == ["job_test1"]
@@ -306,7 +351,7 @@ def test_job_tool_failure_returns_job_failed(tmp_path):
     reg, store, session_id = _registry(tmp_path, FakeService(), answer_mode="deep", job_runner=runner)
     result = asyncio.run(reg.execute("run", {"question": "q"}))
     assert result.content["error"]["code"] == te.JOB_FAILED
-    trace = store.build_record(session_id)["turns"][0]["tool_trace"][-1]
+    trace = _tool_traces(store, session_id)[-1]
     assert trace["error_code"] == te.JOB_FAILED
 
 
@@ -316,7 +361,7 @@ def test_job_tool_failure_returns_job_failed(tmp_path):
 def test_successful_read_only_tool_records_trace(tmp_path):
     reg, store, session_id = _registry(tmp_path, FakeService())
     asyncio.run(reg.execute("search", {"query": "membranes"}))
-    trace = store.build_record(session_id)["turns"][0]["tool_trace"][-1]
+    trace = _tool_traces(store, session_id)[-1]
     assert trace["tool_name"] == "search"
     assert trace["status"] == "ok"
     assert trace["permission_level"] == "read_only"
@@ -355,7 +400,7 @@ def _run_agent_capture(monkeypatch, *, options):
 
     class FakeLoop:
         def __init__(self, *a, **kw):
-            pass
+            captured["loop_kwargs"] = kw
 
         async def run(self, *a, **kw):
             if False:
@@ -363,9 +408,10 @@ def _run_agent_capture(monkeypatch, *, options):
 
     monkeypatch.setattr(mod, "ToolRegistry", FakeRegistry)
     monkeypatch.setattr(mod, "AgentLoop", FakeLoop)
-    monkeypatch.setattr(mod, "build_llm_client", lambda *_: object())
-    monkeypatch.setattr(mod.settings_store, "agent_config", lambda: {
-        "answer_mode": "quick", "max_tool_iterations": 3, "tool_budget": 5,
+    monkeypatch.setattr(mod, "build_llm_client", lambda *_, **_kw: object())
+    monkeypatch.setattr(mod.settings_store, "agent_config", lambda **_kw: {
+        "answer_mode": "quick", "max_tool_iterations": 10, "tool_budget": 24,
+        "max_search_calls_per_turn": 8,
         "enforce_citations": False, "grounding_mode": "audit",
     })
     monkeypatch.setattr(mod.real_adapter, "service", object(), raising=False)
@@ -375,19 +421,26 @@ def _run_agent_capture(monkeypatch, *, options):
             pass
 
     asyncio.run(drain())
-    return captured["answer_mode"]
+    return captured
 
 
 def test_per_turn_deep_overrides_quick_default(monkeypatch):
-    assert _run_agent_capture(monkeypatch, options={"answer_mode": "deep"}) == "deep"
+    assert _run_agent_capture(monkeypatch, options={"answer_mode": "deep"})["answer_mode"] == "deep"
 
 
 def test_per_turn_absent_falls_back_to_setting(monkeypatch):
-    assert _run_agent_capture(monkeypatch, options={}) == "quick"
+    assert _run_agent_capture(monkeypatch, options={})["answer_mode"] == "quick"
 
 
 def test_per_turn_invalid_mode_ignored(monkeypatch):
-    assert _run_agent_capture(monkeypatch, options={"answer_mode": "bogus"}) == "quick"
+    assert _run_agent_capture(monkeypatch, options={"answer_mode": "bogus"})["answer_mode"] == "quick"
+
+
+def test_agent_loop_receives_expanded_search_and_tool_limits(monkeypatch):
+    captured = _run_agent_capture(monkeypatch, options={})
+    assert captured["loop_kwargs"]["max_iterations"] == 10
+    assert captured["loop_kwargs"]["tool_budget"] == 24
+    assert captured["loop_kwargs"]["max_searches"] == 8
 
 
 def _handle_chat_capture_non_research(monkeypatch, message, *, llm=None, llm_enabled=True):
@@ -403,11 +456,11 @@ def _handle_chat_capture_non_research(monkeypatch, message, *, llm=None, llm_ena
 
     monkeypatch.setattr(mod, "REAL_AGENT_AVAILABLE", True)
     monkeypatch.setattr(mod, "real_adapter", object())
-    monkeypatch.setattr(mod.settings_store, "llm_enabled", lambda: llm_enabled)
+    monkeypatch.setattr(mod.settings_store, "llm_enabled", lambda **_kw: llm_enabled)
     monkeypatch.setattr(mod, "ToolRegistry", BoomRegistry)
     monkeypatch.setattr(mod, "AgentLoop", BoomLoop)
     if llm is not None:
-        monkeypatch.setattr(mod, "build_llm_client", lambda *_: llm)
+        monkeypatch.setattr(mod, "build_llm_client", lambda *_, **_kw: llm)
 
     async def drain():
         return [

@@ -22,6 +22,8 @@ CORE_TABLES = {
     "turns",
     "search_results",
     "evidence_items",
+    "evidence_records",
+    "message_citations",
     "research_state",
     "paper_states",
     "evidence_states",
@@ -400,6 +402,65 @@ def test_formal_user_management_revision_supports_offline_sql_generation(capsys)
     assert "CREATE TABLE user_credentials" in sql
     assert "CREATE TABLE auth_sessions" in sql
     assert "DROP TABLE user_credentials" in sql
+
+
+def test_schema_compiler_revision_supports_offline_sql_generation(capsys):
+    cfg = alembic_config("postgresql+psycopg://user:password@localhost/literature_agent", "public")
+
+    command.upgrade(cfg, "0004_formal_user_management:0005_schema_compiler", sql=True)
+    command.downgrade(cfg, "0005_schema_compiler:0004_formal_user_management", sql=True)
+
+    sql = capsys.readouterr().out
+    assert "CREATE TABLE structured_extraction_schema_compilations" in sql
+    assert "source_compilation_id" in sql
+    assert "global_instructions_json" in sql
+    assert "source_compilation_modified" in sql
+    assert "DROP TABLE structured_extraction_schema_compilations" in sql
+
+
+def test_schema_compiler_async_revision_supports_offline_sql_generation(capsys):
+    cfg = alembic_config("postgresql+psycopg://user:password@localhost/literature_agent", "public")
+
+    command.upgrade(cfg, "0006_persistent_citations:0007_schema_compiler_async", sql=True)
+    command.downgrade(cfg, "0007_schema_compiler_async:0006_persistent_citations", sql=True)
+
+    sql = capsys.readouterr().out
+    assert "execution_status" in sql
+    assert "core_job_id" in sql
+    assert "request_json" in sql
+    assert "uq_structured_schema_compilations_active" in sql
+    assert "DROP COLUMN execution_status" in sql
+
+
+def test_schema_compilation_table_persists_worker_execution_state():
+    from core.db.engine import engine_for_url
+
+    expected_columns = {
+        "execution_status",
+        "phase",
+        "progress",
+        "core_job_id",
+        "request_json",
+        "error_json",
+        "started_at",
+        "completed_at",
+    }
+    with migrated_postgres_schema() as (url, schema):
+        engine = engine_for_url(url, schema=schema)
+        try:
+            inspector = inspect(engine)
+            columns = {
+                column["name"]
+                for column in inspector.get_columns("structured_extraction_schema_compilations", schema=schema)
+            }
+            foreign_keys = inspector.get_foreign_keys("structured_extraction_schema_compilations", schema=schema)
+            indexes = inspector.get_indexes("structured_extraction_schema_compilations", schema=schema)
+        finally:
+            engine.dispose()
+
+    assert expected_columns.issubset(columns)
+    assert any(fk["constrained_columns"] == ["core_job_id"] for fk in foreign_keys)
+    assert any(index["name"] == "uq_structured_schema_compilations_active" and index["unique"] for index in indexes)
 
 
 def test_formal_user_management_migrates_legacy_0003_user_to_head():

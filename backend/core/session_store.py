@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+from collections import OrderedDict
 from typing import Any
 
 from sqlalchemy import text
@@ -337,7 +339,12 @@ class SessionStore:
                 text("select * from messages where session_id = :session_id order by created_at, message_id"),
                 {"session_id": uuid_value(session_id)},
             ).mappings().all()
-        return [_message_row(row) for row in rows]
+        messages = [_message_row(row) for row in rows]
+        for message in messages:
+            citations = self.message_citations(message["message_id"])
+            if citations:
+                _attach_citation_rows(message, citations)
+        return messages
 
     def delete_last_turn(self, session_id: str, *, user_id: str | None = None) -> str | None:
         self._ensure_session(session_id, user_id=user_id, create_if_missing=False)
@@ -354,7 +361,7 @@ class SessionStore:
                 {"turn_id": turn_id},
             ).mappings().first()
             user_text = user_row["content"] if user_row else ""
-            for table in ("messages", "search_results", "evidence_items", "conversation_artifact_links"):
+            for table in ("message_citations", "messages", "search_results", "evidence_items", "conversation_artifact_links"):
                 conn.execute(text(f"delete from {table} where turn_id = :turn_id"), {"turn_id": turn_id})
             conn.execute(text("delete from turns where turn_id = :turn_id"), {"turn_id": turn_id})
         return user_text
@@ -544,6 +551,164 @@ class SessionStore:
             )
         return tool_call_id
 
+    def upsert_evidence_record(self, snapshot: dict) -> str:
+        paper = snapshot.get("paper_snapshot") or snapshot.get("paper") or {}
+        locator = snapshot.get("source_locator") or {}
+        evidence_uid = snapshot.get("evidence_uid")
+        if not evidence_uid:
+            raise ValueError("evidence_uid is required")
+        ts = utc_now()
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    insert into evidence_records(
+                        evidence_record_id, evidence_uid, source_type, paper_id, paper_stable_id,
+                        doi, title, section_id, chunk_index, index_version, source_locator_json,
+                        content_hash, latest_metadata_json, created_at, updated_at
+                    ) values(
+                        :evidence_record_id, :evidence_uid, :source_type, :paper_id, :paper_stable_id,
+                        :doi, :title, :section_id, :chunk_index, :index_version, cast(:source_locator_json as jsonb),
+                        :content_hash, cast(:latest_metadata_json as jsonb), :created_at, :updated_at
+                    )
+                    on conflict(evidence_uid) do update set
+                        source_type = excluded.source_type,
+                        paper_id = excluded.paper_id,
+                        paper_stable_id = excluded.paper_stable_id,
+                        doi = excluded.doi,
+                        title = excluded.title,
+                        section_id = excluded.section_id,
+                        chunk_index = excluded.chunk_index,
+                        index_version = excluded.index_version,
+                        source_locator_json = excluded.source_locator_json,
+                        content_hash = excluded.content_hash,
+                        latest_metadata_json = excluded.latest_metadata_json,
+                        updated_at = excluded.updated_at
+                    returning evidence_record_id
+                    """
+                ),
+                {
+                    "evidence_record_id": uuid_value(new_uuid()),
+                    "evidence_uid": evidence_uid,
+                    "source_type": snapshot.get("source_type") or locator.get("source_type") or "literature_search",
+                    "paper_id": paper.get("paper_id") or locator.get("paper_id"),
+                    "paper_stable_id": paper.get("paper_stable_id"),
+                    "doi": paper.get("doi"),
+                    "title": paper.get("title"),
+                    "section_id": snapshot.get("section_id") or locator.get("section_id"),
+                    "chunk_index": _to_int(snapshot.get("chunk_index") or locator.get("chunk_index")),
+                    "index_version": _to_int(snapshot.get("index_version") or locator.get("index_version")),
+                    "source_locator_json": json_dumps(locator),
+                    "content_hash": snapshot.get("chunk_snapshot_hash") or _content_hash(snapshot.get("chunk_snapshot_text")),
+                    "latest_metadata_json": json_dumps(paper),
+                    "created_at": ts,
+                    "updated_at": ts,
+                },
+            ).mappings().first()
+        return str(row["evidence_record_id"])
+
+    def record_message_citations(self, message_id: str, citations: list[dict]) -> list[dict]:
+        if not citations:
+            return []
+        with self.engine.connect() as conn:
+            message = conn.execute(
+                text("select message_id, session_id, turn_id from messages where message_id = :message_id"),
+                {"message_id": uuid_value(message_id)},
+            ).mappings().first()
+        if not message:
+            raise KeyError(f"message not found: {message_id}")
+
+        out: list[dict] = []
+        for citation in citations:
+            evidence_record_id = self.upsert_evidence_record(citation)
+            ts = utc_now()
+            with self.engine.begin() as conn:
+                row = conn.execute(
+                    text(
+                        """
+                        insert into message_citations(
+                            message_citation_id, message_id, session_id, turn_id, alias, citation_marker,
+                            evidence_uid, evidence_record_id, source_locator_json, paper_snapshot_json,
+                            chunk_snapshot_text, chunk_snapshot_hash, display_snippet, citation_context, created_at
+                        ) values(
+                            :message_citation_id, :message_id, :session_id, :turn_id, :alias, :citation_marker,
+                            :evidence_uid, :evidence_record_id, cast(:source_locator_json as jsonb), cast(:paper_snapshot_json as jsonb),
+                            :chunk_snapshot_text, :chunk_snapshot_hash, :display_snippet, :citation_context, :created_at
+                        )
+                        on conflict(message_id, alias) do update set
+                            citation_marker = excluded.citation_marker,
+                            evidence_uid = excluded.evidence_uid,
+                            evidence_record_id = excluded.evidence_record_id,
+                            source_locator_json = excluded.source_locator_json,
+                            paper_snapshot_json = excluded.paper_snapshot_json,
+                            chunk_snapshot_text = excluded.chunk_snapshot_text,
+                            chunk_snapshot_hash = excluded.chunk_snapshot_hash,
+                            display_snippet = excluded.display_snippet,
+                            citation_context = excluded.citation_context
+                        returning *
+                        """
+                    ),
+                    {
+                        "message_citation_id": uuid_value(new_uuid()),
+                        "message_id": message["message_id"],
+                        "session_id": message["session_id"],
+                        "turn_id": message["turn_id"],
+                        "alias": str(citation.get("alias") or ""),
+                        "citation_marker": citation.get("citation_marker") or f"[{citation.get('alias')}]",
+                        "evidence_uid": citation.get("evidence_uid"),
+                        "evidence_record_id": uuid_value(evidence_record_id),
+                        "source_locator_json": json_dumps(citation.get("source_locator") or {}),
+                        "paper_snapshot_json": json_dumps(citation.get("paper_snapshot") or {}),
+                        "chunk_snapshot_text": citation.get("chunk_snapshot_text") or "",
+                        "chunk_snapshot_hash": citation.get("chunk_snapshot_hash") or _content_hash(citation.get("chunk_snapshot_text")),
+                        "display_snippet": citation.get("display_snippet"),
+                        "citation_context": citation.get("citation_context"),
+                        "created_at": ts,
+                    },
+                ).mappings().first()
+            out.append(_message_citation_row(row))
+        return out
+
+    def message_citations(self, message_id: str) -> list[dict]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text("select * from message_citations where message_id = :message_id order by alias"),
+                {"message_id": uuid_value(message_id)},
+            ).mappings().all()
+        return [_message_citation_row(row) for row in rows]
+
+    def recent_citations(self, session_id: str, *, limit: int = 6) -> list[dict]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    select mc.*, m.content as answer_content
+                    from message_citations mc
+                    join messages m on m.message_id = mc.message_id
+                    where mc.session_id = :session_id
+                    order by mc.created_at desc, mc.message_citation_id desc
+                    limit :limit
+                    """
+                ),
+                {"session_id": uuid_value(session_id), "limit": max(1, limit * 8)},
+            ).mappings().all()
+        grouped: OrderedDict[str, dict] = OrderedDict()
+        for row in rows:
+            message_id = str(row["message_id"])
+            group = grouped.setdefault(
+                message_id,
+                {
+                    "message_id": message_id,
+                    "turn_id": str(row["turn_id"]) if row["turn_id"] else None,
+                    "answer_excerpt": " ".join((row["answer_content"] or "").split())[:500],
+                    "citations": [],
+                },
+            )
+            group["citations"].append(_message_citation_row(row))
+            if len(grouped) >= limit:
+                break
+        return list(grouped.values())
+
     def link_artifact(self, session_id: str, artifact_id: str, *, turn_id: str | None = None, link_type: str = "manual", user_id: str | None = None) -> None:
         self._ensure_session(session_id, user_id=user_id, create_if_missing=False)
         with self.engine.begin() as conn:
@@ -611,6 +776,7 @@ class SessionStore:
             "recent_messages": self.messages(session_id, user_id=user_id)[-message_limit:],
             "recent_search_results": [_search_row(row) for row in search_rows],
             "recent_evidence": [_evidence_row(row) for row in evidence_rows],
+            "recent_citations": self.recent_citations(session_id, limit=message_limit),
             "linked_artifacts": self.artifacts_for_session(session_id, user_id=user_id),
             "active_jobs": [_job_row(row) for row in active_jobs],
             "research_state": self.research_state_digest(session_id, user_id=user_id),
@@ -843,6 +1009,61 @@ def _evidence_row(row) -> dict:
     return {"evidence_item_id": str(row["evidence_item_id"]), "session_id": str(row["session_id"]), "turn_id": str(row["turn_id"]) if row["turn_id"] else None, "search_result_id": str(row["search_result_id"]) if row["search_result_id"] else None, "evidence_id": row["evidence_id"], "article_id": row["article_id"], "paper_id": row["paper_id"], "doi": row["doi"], "title": row["title"], "kind": row["kind"], "confidence": row["confidence"], "source_path": row["source_path"], "section_id": row["section_id"], "chunk_index": row["chunk_index"], "index_version": row["index_version"], "snippet": row["snippet"], "payload": json_loads(row["payload_json"], {}), "created_at": to_unix_seconds(row["created_at"])}
 
 
+def _message_citation_row(row) -> dict:
+    return {
+        "message_citation_id": str(row["message_citation_id"]),
+        "message_id": str(row["message_id"]),
+        "session_id": str(row["session_id"]),
+        "turn_id": str(row["turn_id"]) if row["turn_id"] else None,
+        "alias": row["alias"],
+        "citation_alias": row["alias"],
+        "citation_marker": row["citation_marker"],
+        "evidence_uid": row["evidence_uid"],
+        "evidence_record_id": str(row["evidence_record_id"]) if row["evidence_record_id"] else None,
+        "source_locator": json_loads(row["source_locator_json"], {}),
+        "paper_snapshot": json_loads(row["paper_snapshot_json"], {}),
+        "chunk_snapshot_text": row["chunk_snapshot_text"],
+        "chunk_snapshot_hash": row["chunk_snapshot_hash"],
+        "display_snippet": row["display_snippet"],
+        "snippet": row["display_snippet"],
+        "citation_context": row["citation_context"],
+        "created_at": to_unix_seconds(row["created_at"]),
+    }
+
+
+def _attach_citation_rows(message: dict, citations: list[dict]) -> None:
+    metadata = message.setdefault("metadata", {})
+    citation_meta = dict(metadata.get("citation") or {})
+    used = []
+    for item in citations:
+        paper = item.get("paper_snapshot") or {}
+        locator = item.get("source_locator") or {}
+        used.append(
+            {
+                "alias": item.get("alias"),
+                "citation_alias": item.get("alias"),
+                "citation_marker": item.get("citation_marker"),
+                "evidence_uid": item.get("evidence_uid"),
+                "title": paper.get("title"),
+                "doi": paper.get("doi"),
+                "year": paper.get("year"),
+                "journal": paper.get("journal"),
+                "paper_id": paper.get("paper_id"),
+                "section": locator.get("section") or locator.get("section_id"),
+                "section_id": locator.get("section_id"),
+                "chunk_index": locator.get("chunk_index"),
+                "source_path": locator.get("source_path"),
+                "snippet": item.get("display_snippet") or item.get("chunk_snapshot_text"),
+                "scope": "current_turn",
+            }
+        )
+    citation_meta["used_evidence"] = used
+    citation_meta.setdefault("cited_ids", [item["alias"] for item in citations])
+    citation_meta.setdefault("missing_ids", [])
+    citation_meta.setdefault("available_count", len(citations))
+    metadata["citation"] = citation_meta
+
+
 def _artifact_row(row) -> dict:
     return {"artifact_id": str(row["artifact_id"]), "user_id": str(row["user_id"]), "artifact_type": row["artifact_type"], "title": row["title"], "json_path": row["json_path"], "markdown_path": row["markdown_path"], "summary": json_loads(row["summary_json"], {}), "created_at": to_unix_seconds(row["created_at"]), "updated_at": to_unix_seconds(row["updated_at"]), "turn_id": str(row["turn_id"]) if row.get("turn_id") else None, "link_type": row.get("link_type"), "linked_at": to_unix_seconds(row.get("linked_at"))}
 
@@ -867,6 +1088,11 @@ def _uuid_or_new(value: Any) -> str:
 
 def _dt_or_now(_value: Any):
     return utc_now()
+
+
+def _content_hash(value: Any) -> str:
+    text_value = " ".join(str(value or "").split())
+    return hashlib.sha256(text_value.encode("utf-8")).hexdigest()
 
 
 session_store = SessionStore()

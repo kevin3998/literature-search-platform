@@ -37,6 +37,15 @@ test("nested schema editor keeps field nodes compact inside the editor column", 
   assert.match(source, /min-h-\[34px\]/);
 });
 
+test("nested schema editor keeps every field action reachable on narrow screens", async () => {
+  const source = await readFile(resolve(__dirname, "../src/components/structured-extraction/SchemaDesigner.jsx"), "utf8");
+
+  assert.match(source, /flex-wrap\s+sm:flex-nowrap/);
+  assert.match(source, /basis-full\s+justify-end\s+sm:basis-auto/);
+  assert.match(source, /border-l-0\s+pl-0\s+sm:ml-5\s+sm:border-l\s+sm:pl-2/);
+  assert.match(source, /flex-col\s+items-stretch\s+sm:flex-row\s+sm:items-center/);
+});
+
 test("nested schema editor starts with empty user-defined data fields", async () => {
   const source = await readFile(resolve(__dirname, "../src/components/structured-extraction/SchemaDesigner.jsx"), "utf8");
 
@@ -67,18 +76,44 @@ test("nested schema editor is a two-pane workbench without unit or example field
   assert.doesNotMatch(source, /function TreeNode/);
 });
 
-test("nested schema source syncs parsed results into the manual field tree", async () => {
+test("schema compiler workbench applies reviewed results into the manual field tree", async () => {
   const source = await readFile(resolve(__dirname, "../src/components/structured-extraction/SchemaDesigner.jsx"), "utf8");
 
   assert.match(source, /待同步字段结构/);
-  assert.match(source, /同步到下方字段树/);
+  assert.match(source, /应用到字段树/);
   assert.match(source, /放弃解析结果/);
-  assert.match(source, /已同步，下面可以继续手动调整/);
+  assert.match(source, /Schema 编译报告/);
+  assert.match(source, /系统 paper_metadata/);
+  assert.match(source, /记录模型/);
+  assert.match(source, /全局抽取规则/);
+  assert.match(source, /自动规范化记录/);
+  assert.match(source, /用户字段树/);
+  assert.match(source, /待处理要求/);
+  assert.match(source, /needs_review/);
   assert.match(source, /window\.confirm/);
+  assert.match(source, /编译结果包含警告/);
   assert.match(source, /treeWorkbenchRef/);
   assert.match(source, /scrollIntoView/);
   assert.doesNotMatch(source, /应用预览结构/);
   assert.doesNotMatch(source, /解析结果预览/);
+});
+
+test("schema compiler keeps per-task workbench state and shows durable phase progress", async () => {
+  const component = await readFile(resolve(__dirname, "../src/components/structured-extraction/SchemaDesigner.jsx"), "utf8");
+  const store = await readFile(resolve(__dirname, "../src/store/useAppStore.js"), "utf8");
+
+  assert.match(store, /schemaWorkbenchByTask/);
+  assert.match(store, /readSchemaWorkbenchSession/);
+  assert.match(store, /resumeExtractionSchemaCompilation/);
+  assert.match(store, /streamSchemaCompilation/);
+  assert.match(store, /pollExtractionSchemaCompilation/);
+  assert.match(component, /SchemaCompilationProgress/);
+  assert.match(component, /解析进行中/);
+  assert.match(component, /已用时间/);
+  assert.match(component, /正在调用模型进行语义编译/);
+  assert.match(component, /正在定向修复编译结果/);
+  assert.doesNotMatch(component, /const \[definitionText, setDefinitionText\] = useState/);
+  assert.doesNotMatch(component, /const \[previewTree, setPreviewTree\] = useState/);
 });
 
 test("review workbench uses queue based master detail instead of a wide review table", async () => {
@@ -130,5 +165,14 @@ test("citation labels distinguish UI ordinals from real evidence ids", () => {
   assert.equal(citationOrdinalLabel(1), "证据 1");
   assert.equal(citationOrdinalLabel(null), "证据");
   assert.equal(evidenceIdLabel("E12345"), "证据ID：E12345");
-  assert.equal(citationAriaLabel("E12345", 2), "文献证据 2，证据ID：E12345");
+  assert.equal(citationAriaLabel(2), "文献证据 2");
+});
+
+test("markdown citation renderer uses numeric citation markers", async () => {
+  const source = await readFile(componentPath("MarkdownMessage.jsx"), "utf8");
+
+  assert.match(source, /\\d\+/);
+  assert.doesNotMatch(source, /\[A-Za-z\]\+\\d/);
+  assert.match(source, /e\.alias/);
+  assert.match(source, /citation_alias/);
 });

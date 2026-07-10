@@ -7,7 +7,7 @@ import pytest
 
 from modules.literature_search.agent import grounding as g
 from modules.literature_search.agent.loop import AgentLoop
-from tests.test_agent_loop import FakeService, ScriptedLLM, _drain, _reconstruct_answer
+from tests.test_agent_loop import FakeService, ScriptedLLM, _drain, _ensure_test_user, _reconstruct_answer
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +20,9 @@ def _registry(tmp_path, answer_mode="quick"):
     from modules.literature_search.agent.tools import ToolRegistry
 
     store = SessionStore(db_path=tmp_path / "memory.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="flux")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="flux", user_id=user_id)
     registry = ToolRegistry(
         FakeService(), store, session_id=session["session_id"], turn_id=turn_id, answer_mode=answer_mode
     )
@@ -48,27 +49,27 @@ def test_no_evidence_short_circuits_to_not_answerable():
 
 
 def test_off_mode_returns_none():
-    out = asyncio.run(g.run_grounding(ScriptedLLM([[]]), "x", {"E1": {"snippet": "s"}}, mode="off"))
+    out = asyncio.run(g.run_grounding(ScriptedLLM([[]]), "x", {"1": {"snippet": "s"}}, mode="off"))
     assert out is None
 
 
 def test_malformed_json_degrades_to_none():
     llm = ScriptedLLM([[{"type": "content", "text": "sorry, not json"}]])
-    out = asyncio.run(g.run_grounding(llm, "x [E1]", {"E1": {"snippet": "s"}}, mode="strict"))
+    out = asyncio.run(g.run_grounding(llm, "x [1]", {"1": {"snippet": "s"}}, mode="strict"))
     assert out is None
 
 
 def test_normalize_drops_unavailable_ids():
     payload = {
         "claims": [
-            {"claim": "c", "support_status": "supported", "evidence_ids": ["E1", "E999"], "rewrite_action": "keep"}
+            {"claim": "c", "support_status": "supported", "evidence_ids": ["1", "999"], "rewrite_action": "keep"}
         ],
         "answer_permission": "grounded",
         "rewritten_answer": None,
     }
     llm = ScriptedLLM([_grounding_script(payload)])
-    out = asyncio.run(g.run_grounding(llm, "x [E1]", {"E1": {"snippet": "s"}}, mode="strict"))
-    assert out["claims"][0]["evidence_ids"] == ["E1"]  # fabricated E999 stripped
+    out = asyncio.run(g.run_grounding(llm, "x [1]", {"1": {"snippet": "s"}}, mode="strict"))
+    assert out["claims"][0]["evidence_ids"] == ["1"]  # fabricated 999 stripped
 
 
 # --- end to end through the loop -------------------------------------------
@@ -77,21 +78,21 @@ def test_normalize_drops_unavailable_ids():
 def test_supported_answer_kept_with_permission(tmp_path):
     registry, _store, _sid = _registry(tmp_path)
     payload = {
-        "claims": [{"claim": "膜通量约 30", "support_status": "supported", "evidence_ids": ["E1"],
+        "claims": [{"claim": "膜通量约 30", "support_status": "supported", "evidence_ids": ["1"],
                     "rewrite_action": "keep"}],
         "answer_permission": "grounded",
         "rewritten_answer": None,
     }
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "膜通量约 30 L/m2h [E1]。"}],
+        [{"type": "content", "text": "膜通量约 30 L/m2h [1]。"}],
         _grounding_script(payload),
     ])
     loop = AgentLoop(llm, registry, grounding_mode="strict")
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))
 
     answer = _reconstruct_answer(events)
-    assert answer == "膜通量约 30 L/m2h [E1]。"  # unchanged
+    assert answer == "膜通量约 30 L/m2h [1]。"  # unchanged
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["answer_permission"] == "grounded"
     assert citation["status"] == "ok"
@@ -102,14 +103,14 @@ def test_overclaim_is_rewritten_and_flagged(tmp_path):
     registry, _store, _sid = _registry(tmp_path)
     payload = {
         "claims": [{"claim": "该领域普遍认为通量为 30", "support_status": "partially_supported",
-                    "evidence_ids": ["E1"], "scope_notes": "单篇结果不可推广", "rewrite_action": "downgrade"}],
+                    "evidence_ids": ["1"], "scope_notes": "单篇结果不可推广", "rewrite_action": "downgrade"}],
         "answer_permission": "partially_grounded",
         "warnings": ["将单篇结果写成了领域级结论。"],
-        "rewritten_answer": "在本轮检索到的某研究中，膜通量约为 30 L/m2h [E1]，该结果范围有限。",
+        "rewritten_answer": "在本轮检索到的某研究中，膜通量约为 30 L/m2h [1]，该结果范围有限。",
     }
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "该领域普遍认为膜通量为 30 L/m2h [E1]。"}],
+        [{"type": "content", "text": "该领域普遍认为膜通量为 30 L/m2h [1]。"}],
         _grounding_script(payload),
     ])
     loop = AgentLoop(llm, registry, grounding_mode="strict")
@@ -125,7 +126,7 @@ def test_overclaim_is_rewritten_and_flagged(tmp_path):
     # A gated, safe answer is NOT a warning — it's verified with a neutral footer.
     assert citation["audit_status"] == "verified"
     assert citation["status"] == "ok"
-    assert citation["cited_ids"] == ["E1"] and citation["missing_ids"] == []
+    assert citation["cited_ids"] == ["1"] and citation["missing_ids"] == []
     assert citation["grounding_summary"]["limited"] == 1
     assert citation["grounding_summary"]["unsupported"] == 0  # final answer has none
 
@@ -135,21 +136,21 @@ def test_rewrite_with_fabricated_id_is_still_audited(tmp_path):
     # A misbehaving grounding rewrite that invents an id must still be caught by the
     # deterministic citation audit running on the FINAL answer.
     payload = {
-        "claims": [{"claim": "c", "support_status": "partially_supported", "evidence_ids": ["E1"],
+        "claims": [{"claim": "c", "support_status": "partially_supported", "evidence_ids": ["1"],
                     "rewrite_action": "downgrade"}],
         "answer_permission": "partially_grounded",
-        "rewritten_answer": "据某研究膜通量约 30 [E1]，另有数据 [E999]。",
+        "rewritten_answer": "据某研究膜通量约 30 [1]，另有数据 [999]。",
     }
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "膜通量约 30 [E1]。"}],
+        [{"type": "content", "text": "膜通量约 30 [1]。"}],
         _grounding_script(payload),
     ])
     loop = AgentLoop(llm, registry, grounding_mode="strict")
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "warning"
-    assert citation["missing_ids"] == ["E999"]
+    assert citation["missing_ids"] == ["999"]
 
 
 def test_no_evidence_question_not_answerable(tmp_path):
@@ -178,15 +179,15 @@ def test_strict_rewrite_separates_removed_claims(tmp_path):
     # transparency — never as "unsupported claims sitting in the answer".
     payload = {
         "claims": [
-            {"claim": "通量约 30", "support_status": "supported", "evidence_ids": ["E1"], "rewrite_action": "keep"},
+            {"claim": "通量约 30", "support_status": "supported", "evidence_ids": ["1"], "rewrite_action": "keep"},
             {"claim": "该方法已被普遍证明", "support_status": "unsupported", "evidence_ids": [], "rewrite_action": "remove"},
         ],
         "answer_permission": "partially_grounded",
-        "rewritten_answer": "膜通量约 30 L/m2h [E1]。",
+        "rewritten_answer": "膜通量约 30 L/m2h [1]。",
     }
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "膜通量约 30 [E1]，该方法已被普遍证明。"}],
+        [{"type": "content", "text": "膜通量约 30 [1]，该方法已被普遍证明。"}],
         _grounding_script(payload),
     ])
     loop = AgentLoop(llm, registry, grounding_mode="strict")
@@ -203,15 +204,15 @@ def test_strict_rewrite_separates_removed_claims(tmp_path):
 def test_conflicting_evidence_surfaced(tmp_path):
     registry, _store, _sid = _registry(tmp_path)
     payload = {
-        "claims": [{"claim": "通量为 30", "support_status": "conflicting", "evidence_ids": ["E1"],
+        "claims": [{"claim": "通量为 30", "support_status": "conflicting", "evidence_ids": ["1"],
                     "rewrite_action": "downgrade"}],
         "answer_permission": "conflicting",
         "conflicting_claims": ["一项研究报告 30，另一项报告 50。"],
-        "rewritten_answer": "证据存在冲突：一项研究为 30，另一项为 50 [E1]。",
+        "rewritten_answer": "证据存在冲突：一项研究为 30，另一项为 50 [1]。",
     }
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "膜通量为 30 [E1]。"}],
+        [{"type": "content", "text": "膜通量为 30 [1]。"}],
         _grounding_script(payload),
     ])
     loop = AgentLoop(llm, registry, grounding_mode="strict")
@@ -225,7 +226,7 @@ def test_grounding_off_leaves_citation_unchanged(tmp_path):
     registry, _store, _sid = _registry(tmp_path)
     llm = ScriptedLLM([
         [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-        [{"type": "content", "text": "膜通量约 30 [E1]。"}],
+        [{"type": "content", "text": "膜通量约 30 [1]。"}],
     ])
     loop = AgentLoop(llm, registry)  # default grounding_mode="off"
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))

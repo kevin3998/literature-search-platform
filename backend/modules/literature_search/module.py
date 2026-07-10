@@ -212,6 +212,7 @@ class LiteratureSearchModule(AgentModule):
             registry,
             max_iterations=agent_cfg["max_tool_iterations"],
             tool_budget=agent_cfg["tool_budget"],
+            max_searches=agent_cfg["max_search_calls_per_turn"],
             enforce_citations=agent_cfg["enforce_citations"],
             grounding_mode=agent_cfg["grounding_mode"],
             role_prompt=role.prompt,

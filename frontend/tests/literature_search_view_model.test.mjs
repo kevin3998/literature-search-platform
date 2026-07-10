@@ -119,8 +119,8 @@ test("buildSessionEvidenceItems merges current citation evidence with session ev
     messages: [
       {
         role: "assistant",
-        content: "answer [E1]",
-        citation: { used_evidence: [{ evidence_id: "E1", title: "Current paper", snippet: "current snippet" }] },
+        content: "answer [1]",
+        citation: { used_evidence: [{ alias: "1", evidence_id: "E1", title: "Current paper", snippet: "current snippet" }] },
       },
     ],
     researchState: {
@@ -220,7 +220,7 @@ test("buildSuggestedActions creates Chinese action suggestions from failures and
         role: "assistant",
         content: "当前会话没有可用附件。",
         metadata: { route: "attachment_missing", failureCode: "attachment_missing" },
-        citation: { audit_status: "unverified", missing_ids: ["E99"], used_evidence: [] },
+        citation: { audit_status: "unverified", missing_ids: ["99"], used_evidence: [] },
       },
     ],
     researchState: {

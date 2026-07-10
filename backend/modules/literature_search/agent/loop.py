@@ -24,19 +24,21 @@ from typing import Any, AsyncIterator
 from core.llm.client import LLMClient
 from modules.literature_search.failure_messages import failure_message
 from modules.literature_search.agent import grounding as grounding_mod
+from modules.literature_search.agent.citations import CitationRegistry
 from modules.literature_search.agent import orchestration as orch
 from modules.literature_search.agent import tool_errors as te
 from modules.literature_search.agent.tools import ToolRegistry
 
-# Accept BOTH half-width [E#] and full-width 【E#】 brackets: Chinese-output models
-# routinely emit 【E4470087】, which would otherwise read as "no citation at all"
+# Accept BOTH half-width [1] and full-width 【1】 brackets: Chinese-output models
+# routinely emit 【1】, which would otherwise read as "no citation at all"
 # and trip a false "had evidence but cited nothing" warning.
-_CITATION_RE = re.compile(r"[\[【]([A-Za-z]+\d+)[\]】]")
+_CITATION_RE = re.compile(r"[\[【]([0-9]+)[\]】]")
 
 _FORCE_ANSWER = (
     "现在不要再调用任何工具。基于以上对话中工具已经返回的证据，直接写出最终中文回答："
-    "用 [E#] 标注每一处来自证据的结论（只能使用前面工具真实返回过的 evidence_id），"
-    "并在证据不足时明确说明缺口。不要复述你的搜索过程、尝试过程或工具调用计划。"
+    "用 [1] 这种数字引用标注每一处来自证据的结论（只能使用前面工具真实返回过的数字 evidence_id alias），"
+    "并在证据不足时明确说明缺口。不要复述你的搜索过程、尝试过程、工具调用计划、工具预算、"
+    "pack/paper_chunks 是否成功或失败。"
 )
 
 _PROCESS_NARRATION_SENTENCE_RE = re.compile(
@@ -51,6 +53,9 @@ _PROCESS_NARRATION_SENTENCE_RE = re.compile(
     r"|(?:我(?:来|将|会)?(?:先)?(?:搜索|检索|查找|查询|尝试)[^。！？.!?]*(?:[。！？.!?]\s*)+)"
     r"|(?:让我(?:先)?(?:搜索|检索|查找|查询|尝试)[^。！？.!?]*(?:[。！？.!?]\s*)+)"
     r"|(?:让我(?:先)?(?:整合|组织|整理|撰写|生成|给出|总结)[^。！？.!?]*回答[^。！？.!?]*(?:[。！？.!?]\s*)+)"
+    r"|(?:pack\s*没有返回额外内容[^。！？.!?]*(?:[。！？.!?]\s*)+)"
+    r"|(?:(?:好的|好)[,，]?\s*)?检索次数已达上限[^。！？.!?]*(?:[。！？.!?]\s*)+"
+    r"|(?:下面我基于[^。！？.!?]*(?:新检索|检索到|已有|本次)[^。！？.!?]*(?:给出|整理|概览|回答)[^。！？.!?]*(?:[。！？.!?]\s*)+)"
     r")",
     re.IGNORECASE,
 )
@@ -88,7 +93,7 @@ You answer ONLY from evidence retrieved via your tools; never invent papers, num
 
 Workflow:
 - Use `search` first to find candidate papers and evidence snippets. Each evidence item has an
-  `evidence_id` (e.g. E3). Use those ids to cite claims.
+  numeric citation alias in `evidence_id` (e.g. 1). Cite it as [1].
 - For follow-up questions, reuse evidence already present in the conversation context before searching again.
 - Inspect paper structure (`paper_sections` / `paper_chunks`) or expand assets (`evidence_expand`) when needed.
 - For multi-paper, comparison, or statistics answers, build a `pack` (and in deep mode use task_run/run/extract/compare) before composing.
@@ -131,18 +136,16 @@ Breadth vs coverage (the `breadth` field on each search result):
 Answer contract:
 1. State the local search scope / retrieval path you used.
 2. Draw conclusions ONLY from returned evidence.
-3. Cite every non-obvious claim with its evidence id in square brackets, e.g. [E3].
+3. Cite every non-obvious claim with its numeric evidence alias in square brackets, e.g. [1].
 4. List unresolved gaps when evidence is weak or absent.
 5. If the local database returned no usable evidence, say so plainly instead of guessing.
 
-Citation format in prose: put [E#] right after the supported sentence. ALWAYS use half-width
-square brackets [E3] — never full-width 【E3】 — so the citation can be parsed.
-CRITICAL — every [E#] you write MUST be copied verbatim from an evidence_id that a tool returned in THIS
-conversation. Never invent, guess, increment, or pattern-match a new id (e.g. do not write a plausible-looking
-"E2310576" you never received). If you have no real id for a claim, either reuse the correct existing id or
-omit the citation and state the evidence is limited. Cite each claim with the id from the tool that actually
-returned that evidence; `search` and `pack` use different id schemes (search ids look like E4536868; a pack
-re-numbers its own evidence as E1, E2, …) — use whichever id the tool gave you for that specific snippet.
+Citation format in prose: put [1] right after the supported sentence. ALWAYS use half-width
+square brackets [1] — never full-width 【1】 — so the citation can be parsed.
+CRITICAL — every citation you write MUST be copied from a numeric evidence_id alias that a tool returned in
+THIS conversation or from a historical citation explicitly listed in the conversation context. Never invent,
+guess, increment, or pattern-match a new alias. If you have no real alias for a claim, omit the citation and
+state the evidence is limited.
 Answer in the user's language (default 中文)."""
 
 
@@ -154,6 +157,7 @@ class AgentLoop:
         *,
         max_iterations: int = 6,
         tool_budget: int = 12,
+        max_searches: int = orch.MAX_SEARCH_CALLS_PER_TURN,
         enforce_citations: bool = True,
         grounding_mode: str = "off",
         role_prompt: str = "",
@@ -162,6 +166,7 @@ class AgentLoop:
         self.registry = registry
         self.max_iterations = max_iterations
         self.tool_budget = tool_budget
+        self.max_searches = max_searches
         self.enforce_citations = enforce_citations
         # Block 6c: specialist-role system-prompt fragment (empty for the general
         # role). Stated up front so the model honours the role's boundary.
@@ -172,6 +177,8 @@ class AgentLoop:
         self.grounding_mode = grounding_mode
         self._available_evidence: dict[str, dict[str, Any]] = {}
         self._coverage_status: str | None = None
+        self.citation_registry = CitationRegistry()
+        setattr(self.registry, "citation_registry", self.citation_registry)
 
     async def run(
         self,
@@ -179,8 +186,9 @@ class AgentLoop:
         history: list[dict[str, Any]],
         memory_context: dict[str, Any] | None,
     ) -> AsyncIterator[dict[str, Any]]:
+        self.citation_registry = CitationRegistry((memory_context or {}).get("recent_citations") or [])
+        setattr(self.registry, "citation_registry", self.citation_registry)
         messages = self._build_messages(message, history, memory_context)
-        self._register_recent_evidence(memory_context)
         tools = self.registry.definitions()
         tool_calls_used = 0
         answer = ""
@@ -188,8 +196,7 @@ class AgentLoop:
         # Block 5 deterministic orchestration shell (no LLM, no planner pass):
         # bound retries/searches and derive the deep-research suggestion.
         mode = getattr(self.registry, "answer_mode", "quick")
-        guard = orch.TurnGuard()
-        had_recent_evidence = bool((memory_context or {}).get("recent_evidence"))
+        guard = orch.TurnGuard(max_searches=self.max_searches)
         deep_suggested = False
         timeout_failure_emitted = False
         coverage_failure_emitted = False
@@ -251,9 +258,7 @@ class AgentLoop:
                         "code": "tool_timeout_failed",
                         "message": failure_message("tool_timeout_failed"),
                     }
-                for item in result.evidence:
-                    if item.get("evidence_id"):
-                        self._available_evidence[item["evidence_id"]] = item
+                self._available_evidence = self.citation_registry.available_evidence()
                 for event in result.events:
                     if event.get("type") == "coverage" and event.get("status"):
                         self._coverage_status = event["status"]  # Block 3 input signal
@@ -303,6 +308,10 @@ class AgentLoop:
         # Only strict/warn run the (opt-in) LLM grounding pass; only it shows the
         # "校对中" state and the index re-alignment enrichment that feeds it.
         llm_pass = self.grounding_mode in {"strict", "warn"}
+        self._available_evidence = {
+            **self.citation_registry.historical_available_evidence(),
+            **self.citation_registry.available_evidence(),
+        }
         if llm_pass:
             yield {"type": "grounding_status", "state": "checking"}
             # L2 (index-native re-alignment): pull the REAL index chunks containing
@@ -336,10 +345,16 @@ class AgentLoop:
         # the user actually sees (survivors), not the discarded draft. The
         # deterministic citation audit always runs on the final answer below.
         final_grounding = grounding_mod.reconcile_final(grounding, rewrite_applied)
+        finalized = self.citation_registry.finalize_answer(answer)
+        if finalized["answer"] != answer:
+            answer = finalized["answer"]
+            yield {"type": "answer_reset"}
+            if answer:
+                yield {"type": "token", "text": answer}
         # Block 5: deterministic "reused prior evidence" signal — this turn made no
         # search call yet answered from the injected recent evidence (a follow-up).
-        reused_evidence = guard.search_calls == 0 and had_recent_evidence and bool(_CITATION_RE.search(answer or ""))
-        yield self._citation_event(answer, final_grounding, reused_evidence=reused_evidence)
+        reused_evidence = guard.search_calls == 0 and bool((memory_context or {}).get("recent_citations")) and bool(_CITATION_RE.search(answer or ""))
+        yield self._citation_event(answer, final_grounding, reused_evidence=reused_evidence, resolved=finalized)
 
     # --- internals --------------------------------------------------------------
 
@@ -401,16 +416,21 @@ class AgentLoop:
             if eid and eid not in self._available_evidence:
                 self._available_evidence[eid] = dict(item)
 
-    def _citation_event(self, answer: str, grounding: dict[str, Any] | None = None, *, reused_evidence: bool = False) -> dict[str, Any]:
-        cited_ids = list(dict.fromkeys(_CITATION_RE.findall(answer)))
-        available = set(self._available_evidence)
-        missing = [cid for cid in cited_ids if cid not in available]
-        # Display-layer dedupe: search (E{document_id}) and pack (E{n}) can label
-        # the SAME physical evidence with different ids. Collapse the used-evidence
-        # list by physical locus so the footer shows one entry (carrying all its
-        # ids) instead of an apparent duplicate. In-text [E#] citations are
-        # untouched and every id still validates.
-        used = _dedupe_used_evidence(cited_ids, self._available_evidence)
+    def _citation_event(
+        self,
+        answer: str,
+        grounding: dict[str, Any] | None = None,
+        *,
+        reused_evidence: bool = False,
+        resolved: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resolved = resolved or self.citation_registry.resolve_answer(answer)
+        cited_ids = resolved["cited_ids"]
+        missing = resolved["missing_ids"]
+        available = set(self.citation_registry.available_evidence()) | {
+            str(item.get("alias")) for item in self.citation_registry.historical_manifest.values() if item.get("alias")
+        }
+        used = resolved["used_evidence"]
         audit_status, status = self._resolve_audit_status(grounding, cited_ids, missing, available)
         event = {
             "type": "citation",
@@ -419,7 +439,8 @@ class AgentLoop:
             "cited_ids": cited_ids,
             "missing_ids": missing,
             "used_evidence": used,
-            "available_count": len(available),
+            "resolved_citations": resolved["resolved_citations"],
+            "available_count": resolved["available_count"],
             "reused_evidence": reused_evidence,
         }
         # Block 3 superset: nest the FINAL-answer grounding record + answer_permission
@@ -457,7 +478,7 @@ class AgentLoop:
                     return "unverified", "warning"  # cited an id we never retrieved
                 if self.enforce_citations and self._available_evidence and not cited_ids:
                     return "uncited", "warning"  # had evidence but cited nothing
-                return "off", "ok"
+                return ("verified" if self.grounding_mode == "audit" else "off", "ok")
             # strict/warn requested but grounding could not be produced (LLM/parse
             # failure) → the answer is genuinely un-vetted: caution is warranted.
             return "unverified", "warning"
@@ -614,7 +635,7 @@ def _research_state_lines(state: dict[str, Any] | None) -> list[str]:
         for item in items[:limit]:
             eid = item.get("evidence_id") or "?"
             title = item.get("title") or item.get("doi") or ""
-            refs.append(f"[{eid}] {title}".strip())
+            refs.append(f"证据 {eid} {title}".strip())
         return "；".join(refs)
 
     if state.get("accepted_evidence"):
@@ -638,14 +659,18 @@ def _memory_block(memory_context: dict[str, Any] | None) -> str:
     if state_lines:
         lines.extend(state_lines)
         lines.append("")
-    evidence = memory_context.get("recent_evidence") or []
-    if evidence:
-        lines.append("本会话此前检索到的证据（可直接复用并引用其 evidence_id，无需重复检索）：")
-        for item in evidence[:12]:
-            eid = item.get("evidence_id") or "?"
-            title = item.get("title") or ""
-            snippet = (item.get("snippet") or "")[:200]
-            lines.append(f"[{eid}] {title}: {snippet}")
+    citation_groups = memory_context.get("recent_citations") or []
+    if citation_groups:
+        lines.append("本会话此前回答中已经持久化的历史引用（仅在追问前文时复用这些编号）：")
+        for group in citation_groups[:6]:
+            msg = group.get("message_id") or "previous"
+            lines.append(f"Message {msg}:")
+            for item in (group.get("citations") or [])[:8]:
+                alias = item.get("alias") or "?"
+                paper = item.get("paper_snapshot") or {}
+                title = paper.get("title") or paper.get("doi") or ""
+                snippet = (item.get("display_snippet") or item.get("snippet") or "")[:200]
+                lines.append(f"[{alias}] {title}: {snippet}")
     artifacts = memory_context.get("linked_artifacts") or []
     if artifacts:
         lines.append("")
@@ -657,7 +682,7 @@ def _memory_block(memory_context: dict[str, Any] | None) -> str:
         lines.append("")
         lines.append(
             "用户上传的会话临时附件（只能作为上传材料引用，不属于本地文献库证据；"
-            "不要把它们写成 [E#] 文献证据）："
+            "不要把它们写成数字文献证据引用）："
         )
         for item in attachments[:5]:
             filename = item.get("filename") or "附件"

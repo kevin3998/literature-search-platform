@@ -132,6 +132,46 @@ def init_schema(conn: sqlite3.Connection) -> None:
             foreign key(session_id) references sessions(session_id) on delete cascade
         );
 
+        create table if not exists evidence_records (
+            evidence_record_id text primary key,
+            evidence_uid text not null unique,
+            source_type text not null,
+            paper_id text,
+            paper_stable_id text,
+            doi text,
+            title text,
+            section_id text,
+            chunk_index integer,
+            index_version integer,
+            source_locator_json text not null default '{}',
+            content_hash text not null,
+            latest_metadata_json text not null default '{}',
+            created_at real not null,
+            updated_at real not null
+        );
+
+        create table if not exists message_citations (
+            message_citation_id text primary key,
+            message_id text not null,
+            session_id text not null,
+            turn_id text,
+            alias text not null,
+            citation_marker text not null,
+            evidence_uid text not null,
+            evidence_record_id text,
+            source_locator_json text not null default '{}',
+            paper_snapshot_json text not null default '{}',
+            chunk_snapshot_text text not null,
+            chunk_snapshot_hash text not null,
+            display_snippet text,
+            citation_context text,
+            created_at real not null,
+            unique(message_id, alias),
+            foreign key(message_id) references messages(message_id) on delete cascade,
+            foreign key(session_id) references sessions(session_id) on delete cascade,
+            foreign key(evidence_record_id) references evidence_records(evidence_record_id) on delete set null
+        );
+
         create table if not exists artifacts (
             artifact_id text primary key,
             user_id text not null default 'local_user',
@@ -760,6 +800,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
         create index if not exists idx_turns_session_created on turns(session_id, created_at);
         create index if not exists idx_search_session_created on search_results(session_id, created_at);
         create index if not exists idx_evidence_session_created on evidence_items(session_id, created_at);
+        create index if not exists idx_message_citations_message on message_citations(message_id);
+        create index if not exists idx_message_citations_session_created on message_citations(session_id, created_at);
+        create index if not exists idx_message_citations_turn on message_citations(turn_id);
+        create index if not exists idx_message_citations_evidence_uid on message_citations(evidence_uid);
         create index if not exists idx_jobs_session_updated on jobs(session_id, updated_at);
         create index if not exists idx_sessions_user_module_updated on sessions(user_id, module_id, updated_at);
         create index if not exists idx_job_events_job_index on job_events(job_id, event_index);

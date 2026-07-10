@@ -23,7 +23,7 @@ from typing import Any
 # A normal quick turn rarely needs more than a couple of searches; the cap stops
 # runaway re-searching. Coordinated with the lower retry layers (Block 2
 # MAX_RECOVERY, Block 4 search retry=1) — this is the OUTER per-turn ceiling.
-MAX_SEARCH_CALLS_PER_TURN = 3
+MAX_SEARCH_CALLS_PER_TURN = 8
 # Re-issuing the exact same call after it failed twice is a loop, not recovery.
 MAX_IDENTICAL_FAILURES = 2
 
@@ -160,6 +160,7 @@ class TurnGuard:
         self._failures: dict[str, int] = {}
         self.search_calls = 0
         self.search_timeout_seen = False
+        self._tool_timeouts: dict[str, int] = {}
 
     def block_reason(self, name: str, arguments: dict[str, Any] | None) -> str | None:
         """Return a short instruction if this call should NOT be executed, else None.
@@ -175,6 +176,11 @@ class TurnGuard:
             return (
                 "本轮检索工具已经超时。不要继续发起新的检索；"
                 "请说明检索超时，当前无法给出可靠的本地文献证据回答。"
+            )
+        if name == "paper_chunks" and self._tool_timeouts.get(name, 0) >= 1:
+            return (
+                "本轮 paper_chunks 读取论文文本已经超时。不要继续读取全文块；"
+                "请基于 search 或 pack 已返回的证据作答，并说明全文细节覆盖有限。"
             )
         sig = call_signature(name, arguments)
         if self._failures.get(sig, 0) >= self.max_identical_failures:
@@ -193,6 +199,8 @@ class TurnGuard:
             self._failures[sig] = self._failures.get(sig, 0) + 1
 
     def record_error_code(self, name: str, code: str | None) -> None:
+        if code == "timeout":
+            self._tool_timeouts[name] = self._tool_timeouts.get(name, 0) + 1
         if name == "search" and code == "timeout":
             self.search_timeout_seen = True
 

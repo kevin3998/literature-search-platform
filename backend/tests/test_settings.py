@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core.schemas import ChatMessage
+from core.settings_store import DEFAULTS
 
 if not os.getenv("DATABASE_URL"):
     pytest.skip(
@@ -51,6 +52,16 @@ def test_settings_api_defaults_save_effective_and_secret_redaction(monkeypatch, 
 
     model_test = client.post("/api/settings/models/test", json={"provider": "none"}).json()
     assert model_test["available"] is False
+
+
+def test_default_limits_are_expanded_for_product_research_turns():
+    assert DEFAULTS["agent"]["max_tool_iterations"] == 10
+    assert DEFAULTS["agent"]["tool_budget"] == 24
+    assert DEFAULTS["agent"]["max_search_calls_per_turn"] == 8
+    assert DEFAULTS["retrieval"]["default_limit"] == 20
+    assert DEFAULTS["retrieval"]["default_evidence_per_article_limit"] == 5
+    assert DEFAULTS["memory"]["context_search_limit"] == 16
+    assert DEFAULTS["memory"]["evidence_limit_multiplier"] == 4
 
 
 def test_settings_diagnostics_report_external_source_status(monkeypatch, tmp_path):

@@ -38,8 +38,8 @@ _DEFINITIONS: dict[str, dict[str, Any]] = {
     "search": {
         "description": (
             "Search the local literature library and return candidate papers with "
-            "evidence snippets. Each evidence item carries an evidence_id you must "
-            "use to cite claims. Prefer retrieval=hybrid; use fts for exact terms."
+            "evidence snippets. Each evidence item carries a numeric citation alias "
+            "you must use to cite claims, e.g. [1]. Prefer retrieval=hybrid; use fts for exact terms."
         ),
         "parameters": {
             "type": "object",

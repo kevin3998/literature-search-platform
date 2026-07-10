@@ -1,16 +1,15 @@
 import React from "react";
 import clsx from "clsx";
-import { citationAriaLabel, citationOrdinalLabel, evidenceIdLabel } from "./citationLabels.js";
+import { citationAriaLabel, citationOrdinalLabel } from "./citationLabels.js";
 
 // Lightweight Markdown renderer for agent answers. Covers the subset the
 // research agent actually emits — headings, bold, inline code, blockquotes,
 // horizontal rules, ordered/unordered lists, and GFM tables — while keeping the
-// platform's [E#] citation highlighting. Intentionally dependency-free.
+// platform's numeric citation highlighting. Intentionally dependency-free.
 
-// Match both half-width [E#] and full-width 【E#】 citations (Chinese-output models
-// emit 【E#】). slice(1, -1) strips one bracket char on each side either way.
-const CITATION_RE = /([[【][A-Za-z]+\d+[\]】])|(\*\*[^*]+\*\*)|(`[^`]+`)/g;
-const CITATION_ID_RE = /[[【]([A-Za-z]+\d+)[\]】]/g;
+// Match both half-width [1] and full-width 【1】 citations.
+const CITATION_RE = /([[【]\d+[\]】])|(\*\*[^*]+\*\*)|(`[^`]+`)/g;
+const CITATION_ID_RE = /[[【](\d+)[\]】]/g;
 
 // Map each distinct evidence id to a stable sequential number by first
 // appearance (paper convention — the same id always reuses its number).
@@ -30,7 +29,8 @@ export function buildCitationNumbers(text) {
 export function buildEvidenceById(citation) {
   const map = new Map();
   for (const e of citation?.used_evidence || []) {
-    for (const id of e.evidence_ids || [e.evidence_id]) {
+    const ids = e.evidence_ids || [e.alias, e.citation_alias, e.evidence_id].filter(Boolean);
+    for (const id of ids) {
       if (id) map.set(id, e);
     }
   }
@@ -50,7 +50,7 @@ function CitationChip({ id, n, ev, unverified }) {
     <span className="group relative inline-block align-super leading-none">
       <button
         type="button"
-        aria-label={unverified ? `未核验引用，${evidenceIdLabel(id)}` : citationAriaLabel(id, n)}
+        aria-label={unverified ? `未核验引用，文献证据 ${id}` : citationAriaLabel(n)}
         title={unverified ? "未找到对应证据（可能是模型虚构的引用）" : undefined}
         className={clsx(
           "inline-flex items-center justify-center min-w-[30px] h-[16px] px-1.5 ml-0.5 rounded-[7px] text-[9.5px] font-medium transition-colors cursor-default",
@@ -71,7 +71,7 @@ function CitationChip({ id, n, ev, unverified }) {
               </span>
             )}
             {ev.snippet && <span className="block text-[11px] text-ink-500 mt-1 leading-snug">{clampSnippet(ev.snippet, 170)}</span>}
-            <span className="block font-mono text-[10px] text-ink-300 mt-1">{evidenceIdLabel(id)}</span>
+            <span className="block font-mono text-[10px] text-ink-300 mt-1">{citationOrdinalLabel(n)}</span>
           </span>
         </span>
       )}

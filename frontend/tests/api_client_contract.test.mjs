@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { clearApiUserId, sessionApi, setApiUserId, settingsApi, streamChat, streamWorkflow, structuredExtractionApi, workflowApi } from "../src/api/client.js";
+import { clearApiUserId, sessionApi, setApiUserId, settingsApi, streamChat, streamSchemaCompilation, streamWorkflow, structuredExtractionApi, workflowApi } from "../src/api/client.js";
 import { applySchemaPreset, schemaConflictMessages } from "../src/components/structured-extraction/schemaPresets.js";
 
 function jsonResponse(body, init = {}) {
@@ -695,6 +695,8 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
     field_tree: [{ key: "material_name", label: "材料名称", type: "string", required: true, evidence_required: true }],
     field_groups: [{ group_key: "material_identity", label: "材料身份" }],
     fields: [{ key: "membrane_name", label: "膜名称", type: "string", group_key: "material_identity" }],
+    global_instructions: [],
+    source_compilation_id: null,
   });
   assert.equal(requestHeaders["X-User-Id"], "alice");
   assert.equal(draft.taskId, "22222222-2222-4222-8222-222222222222");
@@ -709,6 +711,78 @@ test("structuredExtractionApi schema draft saves contract and normalizes schema 
   assert.equal(draft.fields[0].evidenceRequired, true);
   assert.equal(draft.createdAt, 10);
   assert.equal(draft.frozenAt, null);
+});
+
+test("structuredExtractionApi schema compiler normalizes results and resolution payloads", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, body: options.body ? JSON.parse(options.body) : null });
+    if (url.endsWith("/apply")) {
+      return jsonResponse({
+        task_id: "22222222-2222-4222-8222-222222222222",
+        schema_mode: "nested_record",
+        record_schema: { record_type: "trial" },
+        field_tree: [{ key: "endpoint", source_requirement_ids: ["req_0001"] }],
+        global_instructions: [{ requirement_id: "req_0002", text: "Controlled studies only" }],
+        source_compilation_id: "44444444-4444-4444-8444-444444444444",
+        status: "draft",
+      });
+    }
+    return jsonResponse({
+      compilation_id: "44444444-4444-4444-8444-444444444444",
+      status: "needs_review",
+      source_format: "markdown",
+      schema_mode: "nested_record",
+      record_schema: { record_type: "trial" },
+      field_tree: [{ key: "endpoint", source_requirement_ids: ["req_0001"] }],
+      paper_metadata_fields: ["doi"],
+      system_metadata_contract: { title: { type: "string" }, source_path: { type: "string" } },
+      global_instructions: [{ requirement_id: "req_0002", text: "Controlled studies only" }],
+      requirement_mappings: [{ requirement_id: "req_0003", disposition: "unresolved" }],
+      validation_errors: [{ code: "unresolved_requirement", requirement_id: "req_0003" }],
+    });
+  };
+
+  const compilation = await structuredExtractionApi.resolveSchemaCompilation(
+    "22222222-2222-4222-8222-222222222222",
+    "44444444-4444-4444-8444-444444444444",
+    { resolutions: [{ requirementId: "req_0003", disposition: "system_metadata", targetPath: "paper_metadata.year" }] },
+  );
+  const draft = await structuredExtractionApi.applySchemaCompilation(
+    "22222222-2222-4222-8222-222222222222",
+    "44444444-4444-4444-8444-444444444444",
+    "merge",
+  );
+
+  assert.deepEqual(calls[0].body, {
+    resolutions: [{ requirement_id: "req_0003", disposition: "system_metadata", target_path: "paper_metadata.year" }],
+  });
+  assert.deepEqual(calls[1].body, { mode: "merge" });
+  assert.equal(compilation.compilationId, "44444444-4444-4444-8444-444444444444");
+  assert.deepEqual(compilation.paperMetadataFields, ["doi"]);
+  assert.deepEqual(compilation.systemMetadataKeys, ["title", "source_path"]);
+  assert.equal(compilation.requirementMappings[0].requirementId, "req_0003");
+  assert.equal(draft.schemaMode, "nested_record");
+  assert.equal(draft.sourceCompilationId, "44444444-4444-4444-8444-444444444444");
+  assert.equal(draft.globalInstructions[0].requirementId, "req_0002");
+});
+
+test("normalizeReviewRow prefers paper_metadata and preserves the paper alias", async () => {
+  globalThis.fetch = async () => jsonResponse({
+    record_id: "record-1",
+    paper_id: "paper-1",
+    paper_metadata: { title: "Canonical title", publication_year: 2025, authors: ["A", "B"] },
+    paper: { title: "Legacy title" },
+    record_identity: {},
+    data: {},
+  });
+
+  const row = await structuredExtractionApi.getReviewRecord("task-1", "record-1");
+
+  assert.equal(row.paperMetadata.title, "Canonical title");
+  assert.equal(row.paperMetadata.publicationYear, 2025);
+  assert.deepEqual(row.paperMetadata.authors, ["A", "B"]);
+  assert.deepEqual(row.paper, row.paperMetadata);
 });
 
 test("structuredExtractionApi schema freeze preserves backend error detail", async () => {
@@ -737,6 +811,8 @@ test("structuredExtractionApi prompt contract compile sends contract and normali
       section_contracts: [{ section_key: "composition", node: { key: "composition" } }],
       output_json_contract: { record_unit: "sample_level" },
       extraction_rules: ["Do not guess"],
+      user_extraction_rules: [{ requirement_id: "req_1", text: "Only tested samples" }],
+      system_metadata_contract: { paper_metadata: { title: { type: "string" } }, model_must_not_generate: true },
       created_at: 10,
     });
   };
@@ -754,6 +830,9 @@ test("structuredExtractionApi prompt contract compile sends contract and normali
   assert.equal(contract.sectionContracts[0].sectionKey, "composition");
   assert.equal(contract.fieldContracts[0].evidenceRequired, true);
   assert.equal(contract.outputJsonContract.recordUnit, "sample_level");
+  assert.equal(contract.userExtractionRules[0].requirementId, "req_1");
+  assert.equal(contract.systemMetadataContract.paperMetadata.title.type, "string");
+  assert.equal(contract.systemMetadataContract.modelMustNotGenerate, true);
 });
 
 test("structuredExtractionApi evidence packet build normalizes versions and items", async () => {
@@ -884,6 +963,55 @@ test("structuredExtractionApi evidence packet build jobs send contracts and norm
   assert.equal(items.total, 42);
 });
 
+test("schema compilation API starts durable jobs and normalizes streamed progress", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    if ((options.method || "GET") === "POST") {
+      return jsonResponse({
+        compilation_id: "comp-1",
+        task_id: "task-1",
+        execution_status: "queued",
+        phase: "queued",
+        progress: 5,
+        core_job_id: "job-1",
+        source_text: "Extract metric",
+        request: { source_format: "natural_language" },
+        reused: false,
+        stream_url: "/api/structured-extraction/tasks/task-1/schema/compilations/comp-1/stream",
+      }, { status: 202 });
+    }
+    return new Response([
+      'data: {"type":"snapshot","compilation":{"compilation_id":"comp-1","execution_status":"running","phase":"semantic_compile","progress":35}}',
+      'data: {"type":"schema_compilation_progress","phase":"normalization","progress":60,"indeterminate":false}',
+      'data: {"type":"done"}',
+      "",
+    ].join("\n\n"), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  };
+
+  const started = await structuredExtractionApi.startSchemaCompilation("task-1", {
+    action: "parse_field_definition",
+    instruction: "Extract metric",
+    sourceFormat: "natural_language",
+  });
+  const events = [];
+  await streamSchemaCompilation("task-1", "comp-1", (event) => events.push(event));
+
+  assert.deepEqual(calls[0], {
+    url: "/api/structured-extraction/tasks/task-1/schema/compilations",
+    method: "POST",
+    body: { action: "parse_field_definition", instruction: "Extract metric", source_format: "natural_language" },
+  });
+  assert.equal(started.compilationId, "comp-1");
+  assert.equal(started.executionStatus, "queued");
+  assert.equal(started.coreJobId, "job-1");
+  assert.equal(started.streamUrl, "/api/structured-extraction/tasks/task-1/schema/compilations/comp-1/stream");
+  assert.equal(events[0].compilation.executionStatus, "running");
+  assert.equal(events[0].compilation.phase, "semantic_compile");
+  assert.equal(events[1].phase, "normalization");
+  assert.equal(events.at(-1).type, "done");
+});
+
 test("structuredExtractionApi preparation APIs preserve backend error detail", async () => {
   globalThis.fetch = async () => jsonResponse({ detail: "prompt_contract_required" }, { status: 400 });
 
@@ -949,7 +1077,7 @@ test("structuredExtractionApi extraction run APIs send contracts and normalize r
       return jsonResponse({
         task_id: "22222222-2222-4222-8222-222222222222",
         run_id: "44444444-4444-4444-8444-444444444444",
-        records: [{ record_id: "66666666-6666-4666-8666-666666666666", run_id: "44444444-4444-4444-8444-444444444444", paper_id: "p1", record_identity: { membrane_name: "PES-ZW" }, fields: { water_flux: { raw_value: "120 LMH" } }, source_packet_item_ids: ["77777777-7777-4777-8777-777777777777"], quality_flags: [], created_at: 2 }],
+        records: [{ record_id: "66666666-6666-4666-8666-666666666666", run_id: "44444444-4444-4444-8444-444444444444", paper_id: "p1", paper_metadata: { title: "Canonical paper", authors: ["Alice"] }, paper: { title: "Legacy paper" }, record_identity: { membrane_name: "PES-ZW" }, fields: { water_flux: { raw_value: "120 LMH" } }, source_packet_item_ids: ["77777777-7777-4777-8777-777777777777"], quality_flags: [], created_at: 2 }],
       });
     }
     if (url.endsWith("/cancel")) {
@@ -979,6 +1107,8 @@ test("structuredExtractionApi extraction run APIs send contracts and normalize r
   assert.equal(items.items[0].runItemId, "55555555-5555-4555-8555-555555555555");
   assert.equal(items.items[0].fieldGroup, "performance");
   assert.equal(records.records[0].recordIdentity.membraneName, "PES-ZW");
+  assert.equal(records.records[0].paperMetadata.title, "Canonical paper");
+  assert.deepEqual(records.records[0].paper, records.records[0].paperMetadata);
   assert.equal(records.records[0].fields.waterFlux.rawValue, "120 LMH");
   assert.equal(cancelled.status, "cancelling");
 });

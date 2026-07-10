@@ -67,6 +67,7 @@ const CATEGORY_FIELDS = {
     ["agent", "answer_mode"],
     ["agent", "max_tool_iterations"],
     ["agent", "tool_budget"],
+    ["agent", "max_search_calls_per_turn"],
     ["agent", "enforce_citations"],
     ["agent", "grounding_mode"],
     ["memory", "auto_use_previous_evidence"],
@@ -596,6 +597,7 @@ function AgentCategory() {
         <FormGrid>
           <NumberField scope="agent" name="max_tool_iterations" label="最大工具迭代次数" value={agent.max_tool_iterations} />
           <NumberField scope="agent" name="tool_budget" label="工具预算" value={agent.tool_budget} />
+          <NumberField scope="agent" name="max_search_calls_per_turn" label="每轮检索上限" value={agent.max_search_calls_per_turn} />
         </FormGrid>
       </Group>
       <Group title="证据约束">

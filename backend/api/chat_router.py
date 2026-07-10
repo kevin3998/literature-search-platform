@@ -141,7 +141,7 @@ async def chat_stream(payload: ChatRequest, user: UserContext = Depends(current_
         if answer_parts or error_message:
             meta: dict = {"role_used": turn_role}
             if citation_meta:
-                meta["citation"] = citation_meta
+                meta["citation"] = {k: v for k, v in citation_meta.items() if k != "resolved_citations"}
             if route_meta:
                 meta.update(route_meta)
             if failure_meta:
@@ -151,7 +151,7 @@ async def chat_stream(payload: ChatRequest, user: UserContext = Depends(current_
                 meta["used_attachments"] = attachment_meta
             if library_status_meta:
                 meta.update(library_status_meta)
-            session_store.append(
+            assistant_message_id = session_store.append(
                 payload.session_id,
                 ChatMessage(
                     role="assistant",
@@ -162,6 +162,8 @@ async def chat_stream(payload: ChatRequest, user: UserContext = Depends(current_
                 error=bool(error_message and not answer_parts),
                 user_id=user.user_id,
             )
+            if citation_meta and citation_meta.get("resolved_citations"):
+                session_store.record_message_citations(assistant_message_id, citation_meta.get("resolved_citations") or [])
         if error_message:
             session_store.fail_turn(turn_id)
         else:

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.literature_search.agent import tool_errors as te
+from modules.literature_search.agent.citations import CitationRegistry, item_to_available_evidence
 from modules.literature_search.agent.tool_specs import (
     JOB_REQUIRED,
     ToolSpec,
@@ -86,6 +87,7 @@ class ToolRegistry:
         role_tools: frozenset[str] | None = None,
         original_question: str | None = None,
         user_id: str | None = None,
+        citation_registry: CitationRegistry | None = None,
     ) -> None:
         self.service = service
         self.session_store = session_store
@@ -105,6 +107,7 @@ class ToolRegistry:
         self._job_runner = job_runner
         self.original_question = original_question or ""
         self.user_id = user_id
+        self.citation_registry = citation_registry
 
     @property
     def job_runner(self):
@@ -170,6 +173,7 @@ class ToolRegistry:
                 result = await self._execute_job(spec, arguments)
             else:
                 result = await self._execute_direct(spec, arguments)
+            self._bind_citation_aliases(result)
             self._record_trace(spec.name, spec, arguments, result, started, t0, tool_call_id)
             return result
         except te.ToolError as err:  # raised by job/timeout paths
@@ -254,6 +258,19 @@ class ToolRegistry:
         result._artifact_ids = [a.get("artifact_id") for a in artifacts if a.get("artifact_id")]  # type: ignore[attr-defined]
         result._job_ids = [job_id]  # type: ignore[attr-defined]
         return result
+
+    def _bind_citation_aliases(self, result: ToolResult) -> None:
+        if not self.citation_registry or not result.evidence:
+            return
+        manifest = self.citation_registry.register_tool_evidence(result.evidence)
+        old_to_alias = {
+            str(item.get("source_locator", {}).get("evidence_id")): item["alias"]
+            for item in manifest
+            if item.get("source_locator", {}).get("evidence_id")
+        }
+        alias_evidence = [item_to_available_evidence(item) for item in manifest]
+        result.evidence = alias_evidence
+        result.content = _alias_evidence_ids(result.content, old_to_alias)
 
     def _record_trace(
         self,
@@ -410,7 +427,7 @@ class ToolRegistry:
                 {"evidence_id": d.get("evidence_id"), "section": d.get("section"), "snippet": _truncate(d.get("snippet"), 400)}
                 for d in docs
             ],
-            "note": "These are full-text chunks with REAL evidence_id values — cite specific full-text details (numbers, methods) with these ids; never invent an id.",
+            "note": "These are full-text chunks with numeric citation aliases — cite specific full-text details (numbers, methods) with these aliases, e.g. [1]; never invent an alias.",
         }
         return ToolResult(summary=f"读取论文全文块（{len(docs)} 块，可引用）", content=content, evidence=evidence)
 
@@ -585,7 +602,7 @@ def _compact_search(query: str, papers: list[dict], packet: dict, *, max_evidenc
         },
         "papers": compact_papers,
         "note": (
-            "Cite claims with the evidence_id values above, e.g. [E3]. "
+            "Cite claims with the numeric evidence_id aliases above, e.g. [1]. "
             "Use `coverage.status` to decide: sufficient -> answer; partial -> "
             "answer supported parts and list gaps; weak -> retrieve more or state "
             "insufficiency; none -> do NOT assert factual conclusions. "
@@ -595,6 +612,21 @@ def _compact_search(query: str, papers: list[dict], packet: dict, *, max_evidenc
             + _breadth_action_note(answer_mode)
         ),
     }
+
+
+def _alias_evidence_ids(value: Any, old_to_alias: dict[str, str]) -> Any:
+    if not old_to_alias:
+        return value
+    if isinstance(value, list):
+        return [_alias_evidence_ids(item, old_to_alias) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out = {key: _alias_evidence_ids(item, old_to_alias) for key, item in value.items()}
+    evidence_id = out.get("evidence_id")
+    if evidence_id is not None and str(evidence_id) in old_to_alias:
+        out["original_evidence_id"] = evidence_id
+        out["evidence_id"] = old_to_alias[str(evidence_id)]
+    return out
 
 
 def _breadth_action_note(answer_mode: str) -> str:

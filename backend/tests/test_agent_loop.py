@@ -4,12 +4,15 @@ import asyncio
 from typing import Any, AsyncIterator
 
 import pytest
+from sqlalchemy import text
 
 from core.llm.client import LLMClient, LLMUnavailable, build_llm_client
 from modules.literature_search.agent.loop import AgentLoop
 from modules.literature_search.agent import tool_errors as te
 from modules.literature_search.agent.tools import ToolResult
 from modules.literature_search.agent.tools import ToolRegistry
+
+TEST_USER_ID = "00000000-0000-4000-8000-000000000101"
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +21,22 @@ def _isolate_memory_db(tmp_path, monkeypatch):
     # bind (and read) the developer's real platform_memory.sqlite, which would
     # also leak stale state into later test files.
     monkeypatch.setenv("LITERATURE_MEMORY_DB_PATH", str(tmp_path / "singleton.sqlite"))
+
+
+def _ensure_test_user(store) -> str:
+    with store.engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                insert into users(user_id, display_name, status, metadata_json, created_at, updated_at, role)
+                values(:user_id, 'Agent Test User', 'active', '{}'::jsonb, now(), now(), 'admin')
+                on conflict(user_id) do update
+                set status = 'active', role = 'admin', updated_at = now()
+                """
+            ),
+            {"user_id": TEST_USER_ID},
+        )
+    return TEST_USER_ID
 
 
 class ScriptedLLM(LLMClient):
@@ -214,8 +233,9 @@ def test_search_tool_restricts_to_selected_candidates(tmp_path):
     from core.session_store import SessionStore
 
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     registry = ToolRegistry(
         MultiEvidenceService(), store, session_id=session["session_id"], turn_id=turn_id
     )
@@ -245,15 +265,15 @@ def test_search_tool_persists_fallback_on_no_results(tmp_path):
             return {"query_plan": {"retrieval_used": "fts", "vector_unavailable_reason": ""}, "results": []}
 
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     registry = ToolRegistry(EmptyService(), store, session_id=session["session_id"], turn_id=turn_id)
 
     result = asyncio.run(registry.execute("search", {"query": "xyzzy"}))
     assert result.evidence == []  # no fabricated evidence
 
-    record = store.build_record(session["session_id"])
-    search = record["turns"][0]["searches"][0]
+    search = store.get_context(session["session_id"], user_id=user_id)["recent_search_results"][0]
     assert search["coverage"]["status"] == "none"
     assert search["fallback_reason"]["code"] == "no_results"
 
@@ -262,8 +282,9 @@ def _registry_with(tmp_path, service):
     from core.session_store import SessionStore
 
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     return ToolRegistry(service, store, session_id=session["session_id"], turn_id=turn_id)
 
 
@@ -345,7 +366,7 @@ def test_dedupe_used_evidence_keeps_locusless_separate():
 
 
 def test_pack_evidence_enters_citation_audit(tmp_path):
-    """pack's locally-numbered evidence (E1..En) must be citable, else every
+    """pack's numeric evidence aliases must be citable, else every
     pack-based citation is wrongly flagged "未找到证据"."""
     from core.session_store import SessionStore
 
@@ -364,8 +385,9 @@ def test_pack_evidence_enters_citation_audit(tmp_path):
             }
 
     store = SessionStore(db_path=tmp_path / "m.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     registry = ToolRegistry(PackService(), store, session_id=session["session_id"], turn_id=turn_id)
 
     result = asyncio.run(registry.execute("pack", {"query": "rag"}))
@@ -376,7 +398,7 @@ def test_pack_evidence_enters_citation_audit(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "pack", "arguments": {"query": "rag"}}],
-            [{"type": "content", "text": "RAG 提升 18.5% [E2]。"}],
+            [{"type": "content", "text": "RAG 提升 18.5% [2]。"}],
         ]
     )
     loop = AgentLoop(llm, registry)
@@ -390,8 +412,9 @@ def _make_registry(tmp_path, answer_mode="quick"):
     from core.session_store import SessionStore
 
     store = SessionStore(db_path=tmp_path / "memory.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="flux")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="flux", user_id=user_id)
     registry = ToolRegistry(
         FakeService(),
         store,
@@ -411,7 +434,7 @@ def test_loop_runs_tool_then_answers_with_citation(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "membrane flux"}}],
-            [{"type": "content", "text": "检索路径 fts。膜通量约 30 L/m2h [E1]。"}],
+            [{"type": "content", "text": "检索路径 fts。膜通量约 30 L/m2h [1]。"}],
         ]
     )
     loop = AgentLoop(llm, registry)
@@ -426,12 +449,12 @@ def test_loop_runs_tool_then_answers_with_citation(tmp_path):
 
     # final answer streamed as tokens
     answer = "".join(e["text"] for e in events if e["type"] == "token")
-    assert "[E1]" in answer
+    assert "[1]" in answer
 
     # citation audit: cited a real evidence id, no hallucination
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "ok"
-    assert citation["cited_ids"] == ["E1"]
+    assert citation["cited_ids"] == ["1"]
     assert citation["missing_ids"] == []
 
     # evidence persisted to the memory db for audit / follow-up reuse
@@ -459,7 +482,7 @@ def test_tool_turn_narration_excluded_from_answer(tmp_path):
                 {"type": "content", "text": "我来搜索一下相关文献。"},
                 {"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}},
             ],
-            [{"type": "content", "text": "膜通量约 30 L/m2h [E1]。"}],
+            [{"type": "content", "text": "膜通量约 30 L/m2h [1]。"}],
         ]
     )
     loop = AgentLoop(llm, registry)
@@ -467,7 +490,7 @@ def test_tool_turn_narration_excluded_from_answer(tmp_path):
 
     # The final answer must NOT contain the tool-turn narration.
     answer = _reconstruct_answer(events)
-    assert answer == "膜通量约 30 L/m2h [E1]。"
+    assert answer == "膜通量约 30 L/m2h [1]。"
     assert "我来搜索" not in answer
     # narration surfaced as a process step instead
     assert any(e["type"] == "step" and "我来搜索" in (e.get("label") or "") for e in events)
@@ -504,8 +527,9 @@ def test_coverage_none_emits_failure_explanation(tmp_path):
     from core.session_store import SessionStore
 
     store = SessionStore(db_path=tmp_path / "memory.sqlite")
-    session = store.create_session(module_id="literature_search", title="t")
-    turn_id = store.create_turn(session["session_id"], query="q")
+    user_id = _ensure_test_user(store)
+    session = store.create_session(module_id="literature_search", title="t", user_id=user_id)
+    turn_id = store.create_turn(session["session_id"], query="q", user_id=user_id)
     registry = ToolRegistry(EmptySearchService(), store, session_id=session["session_id"], turn_id=turn_id)
     llm = ScriptedLLM(
         [
@@ -554,7 +578,7 @@ def test_final_answer_strips_sufficient_evidence_process_preface():
     answer = (
         "I already have sufficient evidence from the earlier successful search. "
         "Let me compile the answer based on what I've retrieved.\n\n"
-        "## 本地文献检索结果\n\nSulfur concrete uses Martian soil simulants [E1]."
+        "## 本地文献检索结果\n\nSulfur concrete uses Martian soil simulants [1]."
     )
 
     cleaned = _strip_process_narration(answer)
@@ -600,7 +624,7 @@ def test_final_answer_adds_attachment_source_marker_when_context_was_used(tmp_pa
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "LLM materials discovery"}}],
-            [{"type": "content", "text": "附件总结：LLM 可用于材料文献摘要。\n\n文献也支持该方向 [E1]。"}],
+            [{"type": "content", "text": "附件总结：LLM 可用于材料文献摘要。\n\n文献也支持该方向 [1]。"}],
         ]
     )
     loop = AgentLoop(llm, registry)
@@ -617,7 +641,7 @@ def test_final_answer_adds_attachment_source_marker_when_context_was_used(tmp_pa
     answer = _reconstruct_answer(events)
 
     assert answer.startswith("来自上传附件《note.txt》")
-    assert "[E1]" in answer
+    assert "[1]" in answer
 
 
 def test_exhausted_budget_forces_final_answer(tmp_path):
@@ -628,18 +652,18 @@ def test_exhausted_budget_forces_final_answer(tmp_path):
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
             [{"type": "tool_call", "id": "c2", "name": "search", "arguments": {"query": "flux2"}}],
-            [{"type": "content", "text": "基于已有证据：膜通量约 30 [E1]。"}],
+            [{"type": "content", "text": "基于已有证据：膜通量约 30 [1]。"}],
         ]
     )
     loop = AgentLoop(llm, registry, max_iterations=2)
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))
 
     answer = _reconstruct_answer(events)
-    assert "[E1]" in answer
+    assert "[1]" in answer
     assert "已达到工具调用上限" not in answer  # no more leftover-narration wrap-up note
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "ok"
-    assert citation["cited_ids"] == ["E1"]
+    assert citation["cited_ids"] == ["1"]
 
 
 def test_loop_flags_hallucinated_citation(tmp_path):
@@ -647,7 +671,7 @@ def test_loop_flags_hallucinated_citation(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-            [{"type": "content", "text": "膜通量约 30 [E9]。"}],  # E9 was never retrieved
+            [{"type": "content", "text": "膜通量约 30 [9]。"}],  # 9 was never retrieved
         ]
     )
     loop = AgentLoop(llm, registry)
@@ -655,7 +679,7 @@ def test_loop_flags_hallucinated_citation(tmp_path):
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "warning"
-    assert citation["missing_ids"] == ["E9"]
+    assert citation["missing_ids"] == ["9"]
 
 
 def test_english_successful_answer_flags_pseudo_citation(tmp_path):
@@ -663,7 +687,7 @@ def test_english_successful_answer_flags_pseudo_citation(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "Martian soil simulants building materials"}}],
-            [{"type": "content", "text": "Martian soil simulants can support construction material studies [E99]."}],
+            [{"type": "content", "text": "Martian soil simulants can support construction material studies [99]."}],
         ]
     )
     loop = AgentLoop(llm, registry, enforce_citations=True)
@@ -674,19 +698,19 @@ def test_english_successful_answer_flags_pseudo_citation(tmp_path):
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "warning"
     assert citation["audit_status"] == "unverified"
-    assert citation["cited_ids"] == ["E99"]
-    assert citation["missing_ids"] == ["E99"]
+    assert citation["cited_ids"] == ["99"]
+    assert citation["missing_ids"] == ["99"]
     assert citation["used_evidence"] == []
 
 
 def test_loop_accepts_fullwidth_bracket_citations(tmp_path):
-    """Chinese-output models emit 【E#】 (full-width). Those must count as real
+    """Chinese-output models emit full-width numeric brackets. Those must count as real
     citations, not trip a false "had evidence but cited nothing" warning."""
     registry, _store, _sid = _make_registry(tmp_path)
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-            [{"type": "content", "text": "膜通量约 30 L/m2h【E1】。"}],  # full-width brackets
+            [{"type": "content", "text": "膜通量约 30 L/m2h【1】。"}],  # full-width brackets
         ]
     )
     loop = AgentLoop(llm, registry, enforce_citations=True)
@@ -694,7 +718,7 @@ def test_loop_accepts_fullwidth_bracket_citations(tmp_path):
     events = asyncio.run(_drain(loop.run("膜通量", [], None)))
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "ok"
-    assert citation["cited_ids"] == ["E1"]
+    assert citation["cited_ids"] == ["1"]
     assert citation["missing_ids"] == []
     assert len(citation["used_evidence"]) == 1  # popover has content
 
@@ -706,14 +730,14 @@ def test_audit_mode_flags_fabricated_id_without_llm_pass(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-            [{"type": "content", "text": "膜通量约 30 [E9]。"}],  # E9 never retrieved
+            [{"type": "content", "text": "膜通量约 30 [9]。"}],  # 9 never retrieved
         ]
     )
     loop = AgentLoop(llm, registry, grounding_mode="audit")
     events = asyncio.run(_drain(loop.run("flux", [], None)))
     citation = next(e for e in events if e["type"] == "citation")
     assert citation["status"] == "warning"
-    assert citation["missing_ids"] == ["E9"]
+    assert citation["missing_ids"] == ["9"]
     assert llm.calls == 2  # no extra grounding call (tool turn + answer only)
     assert citation.get("grounding") is None  # no LLM grounding record in audit mode
 
@@ -723,7 +747,7 @@ def test_audit_mode_valid_citation_is_ok(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-            [{"type": "content", "text": "膜通量约 30 L/m2h [E1]。"}],
+            [{"type": "content", "text": "膜通量约 30 L/m2h [1]。"}],
         ]
     )
     loop = AgentLoop(llm, registry, grounding_mode="audit")
@@ -738,7 +762,7 @@ def test_loop_warns_when_evidence_uncited(tmp_path):
     llm = ScriptedLLM(
         [
             [{"type": "tool_call", "id": "c1", "name": "search", "arguments": {"query": "flux"}}],
-            [{"type": "content", "text": "膜通量大概是 30 左右。"}],  # evidence available but no [E#]
+            [{"type": "content", "text": "膜通量大概是 30 左右。"}],  # evidence available but no citation
         ]
     )
     loop = AgentLoop(llm, registry, enforce_citations=True)
@@ -764,6 +788,7 @@ def test_build_llm_client_unavailable_when_provider_none(tmp_path, monkeypatch):
     from core.settings_store import SettingsStore
 
     store = SettingsStore(db_path=tmp_path / "memory.sqlite")  # provider defaults to "none"
-    assert store.llm_enabled() is False
+    _ensure_test_user(store)
+    assert store.llm_enabled(user_id=TEST_USER_ID) is False
     with pytest.raises(LLMUnavailable):
-        build_llm_client(store)
+        build_llm_client(store, user_id=TEST_USER_ID)

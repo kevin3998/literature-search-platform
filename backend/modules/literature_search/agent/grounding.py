@@ -64,7 +64,7 @@ and to produce a corrected answer when it does not.
 For each key factual claim in the answer, classify it against the available evidence:
 - supported: an available evidence snippet directly supports the claim.
 - partially_supported: evidence supports part of it, but the claim extrapolates or has a gap.
-- unsupported: no available evidence supports it (a cited [E#] that exists but does NOT actually back the
+- unsupported: no available evidence supports it (a cited [1] alias that exists but does NOT actually back the
   claim is also unsupported — citation legality is not support).
 - conflicting: different evidence snippets give contradictory information about the claim.
 - inference: the claim is the agent's reasoning/synthesis/hypothesis, not a direct evidence statement.
@@ -73,9 +73,9 @@ CRITICAL — content support, not id identity:
 - Judge whether the CONTENT is supported by ANY available snippet, regardless of which id the answer cited.
 - If a specific number, unit, or term in the claim appears VERBATIM in an available snippet (e.g. "13666",
   "19.14 mS", "234 s"), the claim is supported by that snippet — set support_status=supported and set
-  evidence_ids to that snippet's [E#]. Do not call it unsupported just because the wording differs.
+  evidence_ids to that snippet's numeric alias. Do not call it unsupported just because the wording differs.
 - RE-ALIGNMENT: if the answer attached a wrong or non-existent id to a claim whose content IS supported by
-  some available snippet, keep the claim and re-cite the CORRECT available [E#] (rewrite_action=keep). Only
+  some available snippet, keep the claim and re-cite the CORRECT available alias (rewrite_action=keep). Only
   mark unsupported (and remove) when NO available snippet supports the content at all.
 - METADATA is authoritative: each evidence shows its paper's (year, journal) in parentheses after the title.
   A claim about a paper's publication year or journal that matches that metadata is SUPPORTED — do NOT
@@ -99,7 +99,7 @@ Scope discipline you MUST enforce in the rewritten answer:
 Rewrite rules:
 - Remove or downgrade unsupported claims (do not keep them as-is).
 - Add limiting language to partially_supported claims.
-- Keep every VALID [E#] citation verbatim. NEVER invent, guess, or alter an evidence id; only use ids from
+- Keep every VALID numeric citation verbatim. NEVER invent, guess, or alter an evidence alias; only use aliases from
   the provided evidence list. Drop a citation rather than fabricate one.
 - Keep the user's language (default 中文). Keep it natural and readable — this is the answer the user sees.
 - If nothing needs changing, set rewritten_answer to null.
@@ -109,7 +109,7 @@ Respond with ONLY a JSON object, no prose, no markdown fences:
   "claims": [
     {"claim": "<short paraphrase>", "claim_type": "<fact|metric|comparison|mechanism|inference|...>",
      "support_status": "supported|partially_supported|unsupported|conflicting|inference",
-     "evidence_ids": ["E#"...], "confidence": "high|medium|low",
+     "evidence_ids": ["1"...], "confidence": "high|medium|low",
      "scope_notes": "<why / what limitation>", "rewrite_action": "keep|downgrade|remove|label_inference"}
   ],
   "answer_permission": "grounded|partially_grounded|hypothesis|conflicting|not_answerable",
@@ -263,7 +263,7 @@ def summarize(grounding: dict[str, Any] | None) -> dict[str, Any] | None:
 def _grounding_user_message(
     answer: str, available_evidence: dict[str, dict[str, Any]], coverage_status: str | None
 ) -> str:
-    lines = ["AVAILABLE EVIDENCE (the only ids you may cite):"]
+    lines = ["AVAILABLE EVIDENCE (the only numeric aliases you may cite):"]
     for eid, item in available_evidence.items():
         title = (item.get("title") or "").strip()
         section = (item.get("section") or item.get("kind") or "").strip()

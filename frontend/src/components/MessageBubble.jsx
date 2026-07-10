@@ -4,7 +4,7 @@ import { Copy, Check as CheckIcon, Pencil, FileText, Table, Archive, FlaskConica
 import RetrievalProgress from "./RetrievalProgress";
 import RetrievalInspector from "./RetrievalInspector";
 import MarkdownMessage, { buildCitationNumbers, buildEvidenceById } from "./MarkdownMessage";
-import { citationOrdinalLabel, evidenceIdLabel } from "./citationLabels.js";
+import { citationOrdinalLabel } from "./citationLabels.js";
 
 // Block 6c: specialist-role → badge label for "which subagent answered".
 const ROLE_LABEL = {
@@ -271,7 +271,7 @@ function GroundingSummary({ summary, grounding }) {
 function CitationFooter({ citation, numbers }) {
   const [open, setOpen] = useState(false);
   const used = citation.used_evidence || [];
-  const numberFor = (e) => (e.evidence_ids || [e.evidence_id]).map((id) => numbers?.get(id)).find(Boolean);
+  const numberFor = (e) => (e.evidence_ids || [e.alias, e.citation_alias, e.evidence_id].filter(Boolean)).map((id) => numbers?.get(String(id))).find(Boolean);
   const grounding = citation.grounding;
   const summary = citation.grounding_summary;
   // The red "alarm" tone is reserved for answers that were NOT successfully gated.
@@ -317,7 +317,7 @@ function CitationFooter({ citation, numbers }) {
                 {e.snippet && <div className="text-ink-500 mt-0.5">{e.snippet}</div>}
                 {e.source_path && (
                   <div className="text-ink-400 font-mono text-[11px] mt-0.5">
-                    {evidenceIdLabel((e.evidence_ids || [e.evidence_id]).filter(Boolean).join(", "))} · {e.source_path}
+                    {citationOrdinalLabel(numberFor(e))} · {e.source_path}
                   </div>
                 )}
               </span>

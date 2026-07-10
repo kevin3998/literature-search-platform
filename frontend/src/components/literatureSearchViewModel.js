@@ -18,7 +18,7 @@ function paperIdentityKeys(paper) {
 }
 
 export function evidenceKey(evidence) {
-  return String(evidence?.evidence_id || evidence?.evidenceId || evidence?.evidence_ids?.[0] || evidence?.evidence_item_id || evidence?.evidenceItemId || evidence?.source_path || evidence?.title || "");
+  return String(evidence?.alias || evidence?.citation_alias || evidence?.evidence_id || evidence?.evidenceId || evidence?.evidence_ids?.[0] || evidence?.evidence_item_id || evidence?.evidenceItemId || evidence?.source_path || evidence?.title || "");
 }
 
 export function latestAssistantMessage(messages = []) {
