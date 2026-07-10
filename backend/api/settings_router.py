@@ -5,10 +5,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from core.permissions import require_admin
 from core.settings_store import settings_store
 from core.user_context import UserContext, current_user
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+USER_SETTING_SCOPES = {"models", "retrieval"}
+USER_EFFECTIVE_KEYS = {"general.default_module", "general.default_literature_tab"}
+USER_EFFECTIVE_PREFIXES = ("models.", "retrieval.")
 
 
 class SettingsPatchRequest(BaseModel):
@@ -68,26 +72,31 @@ class ModelProfileUpdate(BaseModel):
 
 @router.get("")
 def get_settings(user: UserContext = Depends(current_user)):
-    return settings_store.get_settings(user_id=user.user_id)
+    settings = settings_store.get_settings(user_id=user.user_id)
+    return settings if _is_admin(user) else _filter_user_settings(settings)
 
 
 @router.patch("")
 def patch_settings(payload: SettingsPatchRequest, user: UserContext = Depends(current_user)):
-    return settings_store.patch(payload.model_dump(), user_id=user.user_id)
+    data = _non_empty_settings_payload(payload.model_dump())
+    _ensure_user_settings_scopes(user, data)
+    settings = settings_store.patch(data, user_id=user.user_id)
+    return settings if _is_admin(user) else _filter_user_settings(settings)
 
 
 @router.get("/effective")
 def effective_settings(user: UserContext = Depends(current_user)):
-    return settings_store.effective(user_id=user.user_id)
+    effective = settings_store.effective(user_id=user.user_id)
+    return effective if _is_admin(user) else _filter_user_effective(effective)
 
 
 @router.get("/diagnostics")
-def diagnostics(user: UserContext = Depends(current_user)):
+def diagnostics(user: UserContext = Depends(require_admin)):
     return settings_store.diagnostics(user_id=user.user_id)
 
 
 @router.get("/readiness")
-def readiness(user: UserContext = Depends(current_user)):
+def readiness(user: UserContext = Depends(require_admin)):
     """Structured agent runtime-readiness contract (why Ready / Not Ready + fallback)."""
     return settings_store.readiness(user_id=user.user_id)
 
@@ -125,7 +134,7 @@ def delete_model_secret(payload: ModelSecretDeleteRequest, user: UserContext = D
 
 
 @router.post("/external-sources/secret")
-def set_external_source_secret(payload: ExternalSourceSecretRequest, user: UserContext = Depends(current_user)):
+def set_external_source_secret(payload: ExternalSourceSecretRequest, user: UserContext = Depends(require_admin)):
     from core.secret_store import secret_store
 
     allowed = {"semantic_scholar", "exa", "openalex"}
@@ -140,7 +149,7 @@ def set_external_source_secret(payload: ExternalSourceSecretRequest, user: UserC
 
 
 @router.delete("/external-sources/secret")
-def delete_external_source_secret(payload: ExternalSourceSecretDeleteRequest, user: UserContext = Depends(current_user)):
+def delete_external_source_secret(payload: ExternalSourceSecretDeleteRequest, user: UserContext = Depends(require_admin)):
     from core.secret_store import secret_store
 
     removed = secret_store.delete(f"external:{payload.source}", user_id=user.user_id)
@@ -153,7 +162,44 @@ def delete_external_source_secret(payload: ExternalSourceSecretDeleteRequest, us
 
 @router.post("/reset")
 def reset_settings(payload: ResetRequest, user: UserContext = Depends(current_user)):
-    return settings_store.reset(payload.scope, user_id=user.user_id)
+    if not _is_admin(user) and payload.scope not in USER_SETTING_SCOPES:
+        raise HTTPException(status_code=403, detail="admin role required")
+    settings = settings_store.reset(payload.scope, user_id=user.user_id)
+    return settings if _is_admin(user) else _filter_user_settings(settings)
+
+
+def _is_admin(user: UserContext) -> bool:
+    return user.role == "admin" and user.status == "active"
+
+
+def _ensure_user_settings_scopes(user: UserContext, payload: dict[str, dict[str, Any]]) -> None:
+    if _is_admin(user):
+        return
+    blocked = [
+        scope for scope, values in payload.items()
+        if values and scope not in USER_SETTING_SCOPES
+    ]
+    if blocked:
+        raise HTTPException(status_code=403, detail="admin role required")
+
+
+def _non_empty_settings_payload(payload: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        scope: values
+        for scope, values in payload.items()
+        if isinstance(values, dict) and values
+    }
+
+
+def _filter_user_settings(settings: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {scope: values for scope, values in settings.items() if scope in USER_SETTING_SCOPES}
+
+
+def _filter_user_effective(effective: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value for key, value in effective.items()
+        if key in USER_EFFECTIVE_KEYS or key.startswith(USER_EFFECTIVE_PREFIXES)
+    }
 
 
 # --- model credential profiles -------------------------------------------------

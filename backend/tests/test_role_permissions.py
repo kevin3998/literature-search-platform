@@ -120,3 +120,93 @@ def test_vector_build_requires_admin(monkeypatch):
     assert admin_response.status_code == 200
     assert admin_response.json()["job_id"] == "vector-job"
     assert fake_runner.called is True
+
+
+def test_settings_diagnostics_and_readiness_require_admin(monkeypatch):
+    from api import settings_router
+
+    class FakeSettingsStore:
+        def diagnostics(self, **_kwargs):
+            return {"overall": "ok"}
+
+        def readiness(self, **_kwargs):
+            return {"ready": True}
+
+    monkeypatch.setattr(settings_router, "settings_store", FakeSettingsStore())
+
+    user_client = _client_for(settings_router.router, UserContext(user_id="user-1", workspace_slug="user-1", role="user"))
+    admin_client = _client_for(settings_router.router, UserContext(user_id="admin-1", workspace_slug="admin-1", role="admin"))
+
+    assert user_client.get("/api/settings/diagnostics").status_code == 403
+    assert user_client.get("/api/settings/readiness").status_code == 403
+    assert admin_client.get("/api/settings/diagnostics").status_code == 200
+    assert admin_client.get("/api/settings/readiness").status_code == 200
+
+
+def test_regular_user_settings_are_limited_to_models_and_retrieval(monkeypatch):
+    from api import settings_router
+
+    class FakeSettingsStore:
+        patched_payload = None
+
+        def get_settings(self, **_kwargs):
+            return {
+                "general": {"platform_name": "Platform", "default_module": "literature_search"},
+                "models": {"temperature": 0.2},
+                "retrieval": {"default_limit": 10},
+                "agent": {"enabled": True},
+                "research_agent": {"data_dir": "/srv/private"},
+                "diagnostics": {"last_run": None},
+            }
+
+        def effective(self, **_kwargs):
+            return {
+                "general.default_module": {"value": "literature_search"},
+                "general.default_literature_tab": {"value": "chat"},
+                "general.platform_name": {"value": "Platform"},
+                "models.temperature": {"value": 0.2},
+                "retrieval.default_limit": {"value": 10},
+                "research_agent.data_dir": {"value": "/srv/private"},
+                "agent.enabled": {"value": True},
+            }
+
+        def patch(self, payload, **_kwargs):
+            self.patched_payload = payload
+            return self.get_settings()
+
+    fake_store = FakeSettingsStore()
+    monkeypatch.setattr(settings_router, "settings_store", fake_store)
+
+    user_client = _client_for(settings_router.router, UserContext(user_id="user-1", workspace_slug="user-1", role="user"))
+
+    settings_response = user_client.get("/api/settings")
+    effective_response = user_client.get("/api/settings/effective")
+    allowed_patch = user_client.patch("/api/settings", json={"models": {"temperature": 0.1}, "retrieval": {"default_limit": 5}})
+    blocked_patch = user_client.patch("/api/settings", json={"agent": {"enabled": False}})
+    blocked_reset = user_client.post("/api/settings/reset", json={"scope": "agent"})
+
+    assert settings_response.status_code == 200
+    assert set(settings_response.json()) == {"models", "retrieval"}
+    assert effective_response.status_code == 200
+    assert set(effective_response.json()) == {
+        "general.default_module",
+        "general.default_literature_tab",
+        "models.temperature",
+        "retrieval.default_limit",
+    }
+    assert allowed_patch.status_code == 200
+    assert fake_store.patched_payload == {"models": {"temperature": 0.1}, "retrieval": {"default_limit": 5}}
+    assert blocked_patch.status_code == 403
+    assert blocked_reset.status_code == 403
+
+
+def test_external_source_secrets_require_admin(monkeypatch):
+    from api import settings_router
+
+    user_client = _client_for(settings_router.router, UserContext(user_id="user-1", workspace_slug="user-1", role="user"))
+
+    set_response = user_client.post("/api/settings/external-sources/secret", json={"source": "exa", "api_key": "secret"})
+    delete_response = user_client.request("DELETE", "/api/settings/external-sources/secret", json={"source": "exa"})
+
+    assert set_response.status_code == 403
+    assert delete_response.status_code == 403
