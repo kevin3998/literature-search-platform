@@ -21,6 +21,46 @@ export function evidenceKey(evidence) {
   return String(evidence?.alias || evidence?.citation_alias || evidence?.evidence_id || evidence?.evidenceId || evidence?.evidence_ids?.[0] || evidence?.evidence_item_id || evidence?.evidenceItemId || evidence?.source_path || evidence?.title || "");
 }
 
+export function detailValueText(value, fallback = "未提供") {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (Array.isArray(value)) {
+    const text = value.map((item) => detailValueText(item, "")).filter(Boolean).join(", ");
+    return text || fallback;
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function identityValues(value) {
+  if (value === undefined || value === null || value === "") return [];
+  if (Array.isArray(value)) return value.flatMap(identityValues);
+  if (typeof value === "object") return Object.values(value).flatMap(identityValues);
+  return [String(value)];
+}
+
+export function evidenceCitationAlias(evidence) {
+  const alias = evidence?.alias || evidence?.citation_alias || evidence?.citationAlias;
+  if (alias) return String(alias);
+  const evidenceId = evidence?.evidence_id || evidence?.evidenceId;
+  return /^\d+$/.test(String(evidenceId || "")) ? String(evidenceId) : null;
+}
+
+export function evidenceInternalIds(evidence) {
+  const alias = evidenceCitationAlias(evidence);
+  const ids = [
+    ...identityValues(evidence?.evidence_ids || evidence?.evidenceIds),
+    ...identityValues(evidence?.source_evidence_id || evidence?.sourceEvidenceId),
+    ...identityValues(evidence?.evidence_id || evidence?.evidenceId),
+  ].filter((id) => id && id !== String(alias || ""));
+  return [...new Set(ids)];
+}
+
 export function latestAssistantMessage(messages = []) {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i]?.role === "assistant") return messages[i];

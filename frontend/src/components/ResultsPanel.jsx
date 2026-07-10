@@ -8,6 +8,9 @@ import {
   buildFilteredEvidenceItems,
   buildPaperItems,
   buildPaperSummary,
+  detailValueText,
+  evidenceCitationAlias,
+  evidenceInternalIds,
 } from "./literatureSearchViewModel";
 import { citationOrdinalLabel, evidenceIdLabel } from "./citationLabels.js";
 
@@ -52,16 +55,12 @@ const CURATION_ACTIONS = [
   ["needs_review", "待复核"],
 ];
 
-function citationAlias(item) {
-  return item?.alias || item?.citation_alias || item?.citationAlias || null;
-}
-
 function evidenceCardLocatorLabel(item) {
-  const alias = citationAlias(item);
+  const alias = evidenceCitationAlias(item);
   if (alias) {
-    return [citationOrdinalLabel(alias), item.source_path].filter(Boolean).join(" · ");
+    return [citationOrdinalLabel(alias), detailValueText(item.source_path, "")].filter(Boolean).join(" · ");
   }
-  return evidenceIdLabel(item.evidence_ids?.join(", ") || item.evidence_id || item.evidenceItemId || item.source_path);
+  return evidenceIdLabel(evidenceInternalIds(item).join(", ") || item.evidenceItemId || detailValueText(item.source_path, ""));
 }
 
 export default function ResultsPanel() {

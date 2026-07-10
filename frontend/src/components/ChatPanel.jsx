@@ -19,7 +19,7 @@ import { useAppStore } from "../store/useAppStore";
 import MessageBubble from "./MessageBubble";
 import AuditRecordModal from "./AuditRecordModal";
 import ResearchStatePanel from "./ResearchStatePanel";
-import { findAudit, findEvidence, findPaper } from "./literatureSearchViewModel";
+import { detailValueText, evidenceCitationAlias, evidenceInternalIds, findAudit, findEvidence, findPaper } from "./literatureSearchViewModel";
 
 const SUGGESTIONS = {
   literature_search: ["RAG 在科研场景中的最新进展", "对比检索增强与微调两类方法", "本地文献库里有哪些综述类文章"],
@@ -439,35 +439,18 @@ function MissingDetail({ text }) {
   return <div className="text-[13px] leading-relaxed text-ink-500">{text}</div>;
 }
 
-function citationAlias(evidence) {
-  return evidence?.alias || evidence?.citation_alias || evidence?.citationAlias || (/^\d+$/.test(String(evidence?.evidence_id || "")) ? evidence.evidence_id : null);
-}
-
-function internalEvidenceIds(evidence, alias) {
-  const ids = [
-    ...(evidence?.evidence_ids || []),
-    evidence?.source_evidence_id,
-    evidence?.sourceEvidenceId,
-    evidence?.evidence_id,
-  ]
-    .filter(Boolean)
-    .map((id) => String(id))
-    .filter((id) => id !== String(alias || ""));
-  return [...new Set(ids)];
-}
-
 function EvidenceDetail({ evidence }) {
   const setEvidenceStatus = useAppStore((s) => s.setEvidenceStatus);
   if (!evidence) return <MissingDetail text="未找到这条证据。可能是会话已经刷新，或该证据不属于最近一轮回答。" />;
-  const alias = citationAlias(evidence);
-  const ids = internalEvidenceIds(evidence, alias);
+  const alias = evidenceCitationAlias(evidence);
+  const ids = evidenceInternalIds(evidence);
   const evidenceItemId = evidence.evidenceItemId || evidence.evidence_item_id;
   const status = evidence.status || "candidate";
   return (
     <div className="space-y-4">
       <div>
         <div className="text-[12px] text-ink-400">证据来源</div>
-        <h3 className="mt-1 font-serif text-[18px] leading-snug text-ink-900">{evidence.title || evidence.doi || "证据片段"}</h3>
+        <h3 className="mt-1 font-serif text-[18px] leading-snug text-ink-900">{detailValueText(evidence.title || evidence.doi || "证据片段")}</h3>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <StatusBadge status={status} />
           {evidence.isCurrent && <span className="rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">本轮证据</span>}
@@ -475,7 +458,7 @@ function EvidenceDetail({ evidence }) {
       </div>
       {(evidence.snippet || evidence.text) && (
         <div className="rounded-lg border border-line bg-paper-50 p-3 text-[13px] leading-relaxed text-ink-700">
-          {evidence.snippet || evidence.text}
+          {detailValueText(evidence.snippet || evidence.text, "")}
         </div>
       )}
       <DetailGrid
@@ -830,7 +813,7 @@ function DetailGrid({ rows }) {
       {rows.map(([label, value]) => (
         <div key={label} className="rounded-md border border-line bg-paper-50 px-3 py-2">
           <div className="text-[11px] text-ink-400">{label}</div>
-          <div className="mt-0.5 break-words text-[12.5px] leading-relaxed text-ink-700">{value}</div>
+          <div className="mt-0.5 break-words text-[12.5px] leading-relaxed text-ink-700">{detailValueText(value)}</div>
         </div>
       ))}
     </div>

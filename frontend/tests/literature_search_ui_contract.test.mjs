@@ -176,6 +176,14 @@ test("literature evidence details include numeric citation aliases", async () =>
   assert.match(resultsSource, /citation_alias|alias/);
 });
 
+test("app root is protected by an error boundary", async () => {
+  const mainSource = await readFile(componentPath("../main.jsx"), "utf8");
+  const boundarySource = await readFile(componentPath("AppErrorBoundary.jsx"), "utf8");
+
+  assert.match(mainSource, /AppErrorBoundary/);
+  assert.match(boundarySource, /componentDidCatch|getDerivedStateFromError/);
+});
+
 test("markdown citation renderer uses numeric citation markers", async () => {
   const source = await readFile(componentPath("MarkdownMessage.jsx"), "utf8");
 

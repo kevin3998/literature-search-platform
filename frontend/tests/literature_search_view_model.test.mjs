@@ -10,6 +10,9 @@ import {
   buildPaperSummary,
   buildSessionEvidenceItems,
   buildSuggestedActions,
+  detailValueText,
+  evidenceCitationAlias,
+  evidenceInternalIds,
   findAudit,
   findEvidence,
   findPaper,
@@ -176,6 +179,19 @@ test("citation-only evidence remains selectable by numeric alias", () => {
   assert.equal(items[0].id, "11");
   assert.equal(items[0].alias, "11");
   assert.equal(found.title, "Alias paper");
+});
+
+test("evidence detail helpers tolerate malformed citation identity fields", () => {
+  const evidence = {
+    alias: "11",
+    evidence_id: "11",
+    evidence_ids: { primary: "E123", extra: "E456" },
+    source_evidence_id: "E789",
+  };
+
+  assert.equal(evidenceCitationAlias(evidence), "11");
+  assert.deepEqual(evidenceInternalIds(evidence), ["E123", "E456", "E789"]);
+  assert.equal(detailValueText({ source: "articles/example.md" }), '{"source":"articles/example.md"}');
 });
 
 test("buildPaperItems and buildPaperSummary use research state candidate papers", () => {
