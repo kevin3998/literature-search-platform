@@ -23,6 +23,31 @@ export const MATERIAL_RECORD_SCHEMA = {
 };
 
 const SYSTEM_KEYS = new Set(["paper_id", "material_name"]);
+const INTERNAL_REQUIREMENT_KEY = /^req_\d+$/i;
+
+export function toSchemaKey(value) {
+  const key = String(value || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase();
+  return INTERNAL_REQUIREMENT_KEY.test(key) ? "" : key;
+}
+
+export function schemaResolutionDefaults(requirement = {}) {
+  const kind = String(requirement.kind || "field").replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  const candidateConstraint = (requirement.constraints || []).find((item) => ["identity_candidates", "identityCandidates"].includes(item?.type));
+  const candidate = requirement.rawName || candidateConstraint?.values?.[0] || "";
+  const fieldName = toSchemaKey(candidate) ? candidate : "";
+  const key = toSchemaKey(fieldName);
+  if (kind === "record_identity") {
+    return { disposition: "record_identity", targetPath: key ? `record_identity.${key}` : "", fieldName };
+  }
+  if (["selection_rule", "grouping_rule", "global_instruction"].includes(kind)) {
+    return { disposition: "global_instruction", targetPath: "", fieldName: "" };
+  }
+  if (kind === "constraint") {
+    const sourcePath = toSchemaKey(requirement.sourcePath || "");
+    return { disposition: "constraint", targetPath: sourcePath ? `data.${sourcePath}` : "", fieldName: "" };
+  }
+  return { disposition: "user_schema", targetPath: key ? `data.${key}` : "", fieldName };
+}
 
 export function newSchemaNode(key = "new_field", label = "新字段", type = "string", children = [], patch = {}) {
   const { unit: _unit, exampleValues: _exampleValues, example_values: _example_values, ...safePatch } = patch || {};
@@ -88,6 +113,9 @@ export function normalizeNode(node = {}, order = 1) {
     evidenceRequired: node.evidenceRequired ?? node.evidence_required ?? true,
     allowedValues: node.allowedValues || node.allowed_values || [],
     notes: node.notes || "",
+    sourceRequirementIds: node.sourceRequirementIds || node.source_requirement_ids || [],
+    origin: node.origin || "manual",
+    confidence: node.confidence ?? null,
     order: Number(node.order || order),
     children,
   };

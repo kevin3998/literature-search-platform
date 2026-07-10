@@ -6,6 +6,7 @@ from typing import Any
 
 from core.llm import LLMUnavailable, build_llm_client
 from core.settings_store import settings_store
+from .schema_contract import is_nested_schema_mode
 
 
 async def extract_packet_item(
@@ -44,7 +45,7 @@ def build_item_prompt(*, task: dict[str, Any], contract: dict[str, Any], packet_
     field_contracts = [field for field in (contract.get("field_contracts") or []) if field.get("key") in field_keys]
     schema_mode = contract.get("schema_mode") or "flat_fields"
     section_contract = None
-    if schema_mode == "nested_material":
+    if is_nested_schema_mode(schema_mode):
         section_contract = next((section for section in (contract.get("section_contracts") or []) if section.get("section_key") == packet_item.get("field_group")), None)
     payload = {
         "task": {"task_id": task.get("task_id"), "name": task.get("name")},
@@ -55,6 +56,8 @@ def build_item_prompt(*, task: dict[str, Any], contract: dict[str, Any], packet_
         "schema_tree_contract": contract.get("schema_tree_contract") or [],
         "output_json_contract": contract.get("output_json_contract") or {},
         "extraction_rules": contract.get("extraction_rules") or [],
+        "user_extraction_rules": contract.get("user_extraction_rules") or [],
+        "system_metadata_contract": contract.get("system_metadata_contract") or {},
         "evidence_packet_item": {
             "packet_item_id": packet_item.get("packet_item_id"),
             "paper_id": packet_item.get("paper_id"),
@@ -64,14 +67,15 @@ def build_item_prompt(*, task: dict[str, Any], contract: dict[str, Any], packet_
             "figures": packet_item.get("figures") or [],
         },
     }
-    if schema_mode == "nested_material":
+    if is_nested_schema_mode(schema_mode):
         mode_rules = (
-            "Return {\"records\":[...]} where each record is one material and includes paper_id, material_name, record_identity, and data. "
+            "Return {\"records\":[...]} where each record includes paper_id, record_identity, and data. "
             "data must contain only the current user-defined top-level section for this evidence packet. "
             "Return user-defined data as native JSON. Do not wrap leaf values in raw_value/evidence/unit containers. "
             "Do not wrap leaf values. Do not normalize units. "
             "Do not add evidence fields inside data unless the user schema explicitly defines them. "
-            "Do not put paper_id or material_name inside data; material_name belongs at the record top level and in record_identity. "
+            "Do not put paper_id or record identity fields inside data. "
+            "Do not generate paper_metadata; the platform injects it from the frozen collection. "
         )
     else:
         mode_rules = (

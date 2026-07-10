@@ -9,6 +9,7 @@ from core.settings_store import settings_store
 from core.user_context import UserContext
 
 from .schemas import SchemaAssistRequest
+from .schema_compiler import ProgressCallback, compile_schema_definition
 
 
 class EmptyLLMOutput(RuntimeError):
@@ -19,11 +20,50 @@ _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _CAMEL_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
 
 
-async def assist_schema(payload: SchemaAssistRequest, *, task: dict[str, Any], user: UserContext) -> dict[str, Any]:
+async def assist_schema(
+    payload: SchemaAssistRequest,
+    *,
+    task: dict[str, Any],
+    user: UserContext,
+    on_progress: ProgressCallback | None = None,
+) -> dict[str, Any]:
     try:
         llm = build_llm_client(settings_store, user_id=user.user_id)
     except LLMUnavailable:
+        if payload.action == "parse_field_definition":
+            result = await compile_schema_definition(
+                instruction=payload.instruction,
+                source_format=payload.source_format,
+                draft=payload.draft,
+                task=task,
+                generate_structured=None,
+                on_progress=on_progress,
+            )
+            return {
+                "available": bool(result.get("field_tree")),
+                "action": payload.action,
+                "status": result["status"],
+                "reason": "llm_unavailable",
+                "result": result,
+                "model_profile_id": None,
+            }
         return {"available": False, "reason": "llm_unavailable"}
+    if payload.action == "parse_field_definition":
+        result = await compile_schema_definition(
+            instruction=payload.instruction,
+            source_format=payload.source_format,
+            draft=payload.draft,
+            task=task,
+            generate_structured=llm.generate_structured,
+            on_progress=on_progress,
+        )
+        return {
+            "available": result["status"] != "llm_unavailable",
+            "action": payload.action,
+            "status": result["status"],
+            "result": result,
+            "model_profile_id": (task.get("model_settings") or {}).get("schema_assist_profile_id"),
+        }
     prompt = _prompt(payload, task=task)
     try:
         text = await _collect_text(llm, [{"role": "user", "content": prompt}])

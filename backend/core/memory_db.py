@@ -517,6 +517,41 @@ def init_schema(conn: sqlite3.Connection) -> None:
             foreign key(task_id) references structured_extraction_tasks(task_id) on delete cascade
         );
 
+        create table if not exists structured_extraction_schema_compilations (
+            compilation_id text primary key,
+            task_id text not null,
+            user_id text not null default 'local_user',
+            source_text text not null,
+            source_format text not null default 'auto',
+            status text not null default 'pending',
+            execution_status text not null default 'completed',
+            phase text not null default 'completed',
+            progress integer not null default 100,
+            core_job_id text,
+            request_json text not null default '{}',
+            error_json text,
+            schema_mode text not null default 'nested_record',
+            compiler_version text not null default '',
+            contract_version text not null default '',
+            requirements_json text not null default '[]',
+            mappings_json text not null default '[]',
+            record_schema_json text not null default '{}',
+            field_tree_json text not null default '[]',
+            global_instructions_json text not null default '[]',
+            coverage_json text not null default '{}',
+            validation_errors_json text not null default '[]',
+            warnings_json text not null default '[]',
+            normalization_changes_json text not null default '[]',
+            model_attempts_json text not null default '[]',
+            field_tree_hash text not null default '',
+            created_at real not null,
+            started_at real,
+            updated_at real not null,
+            completed_at real,
+            foreign key(task_id) references structured_extraction_tasks(task_id) on delete cascade,
+            foreign key(core_job_id) references jobs(job_id) on delete set null
+        );
+
         create table if not exists structured_extraction_schema_events (
             event_id integer primary key autoincrement,
             task_id text not null,
@@ -819,6 +854,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         create index if not exists idx_structured_extraction_candidates_task_source on structured_extraction_candidates(task_id, candidate_source, updated_at);
         create index if not exists idx_structured_extraction_versions_task on structured_extraction_collection_versions(task_id, created_at);
         create index if not exists idx_structured_extraction_schema_versions_task on structured_extraction_schema_versions(task_id, created_at);
+        create index if not exists idx_structured_schema_compilations_task on structured_extraction_schema_compilations(task_id, user_id, created_at);
+        create unique index if not exists uq_structured_schema_compilations_active on structured_extraction_schema_compilations(task_id, user_id) where execution_status in ('queued', 'running');
         create index if not exists idx_structured_extraction_schema_events_task on structured_extraction_schema_events(task_id, created_at);
         create index if not exists idx_structured_extraction_prompt_contracts_task on structured_extraction_prompt_contracts(task_id, created_at);
         create index if not exists idx_structured_extraction_packet_versions_task on structured_extraction_evidence_packet_versions(task_id, created_at);
@@ -855,8 +892,14 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "structured_extraction_evidence_packet_build_jobs", "last_item_seconds", "real")
     _ensure_column(conn, "structured_extraction_schema_drafts", "schema_mode", "text not null default 'flat_fields'")
     _ensure_column(conn, "structured_extraction_schema_drafts", "field_tree_json", "text not null default '[]'")
+    _ensure_column(conn, "structured_extraction_schema_drafts", "source_compilation_id", "text")
+    _ensure_column(conn, "structured_extraction_schema_drafts", "source_compilation_modified", "integer not null default 0")
+    _ensure_column(conn, "structured_extraction_schema_drafts", "global_instructions_json", "text not null default '[]'")
     _ensure_column(conn, "structured_extraction_schema_versions", "schema_mode", "text not null default 'flat_fields'")
     _ensure_column(conn, "structured_extraction_schema_versions", "field_tree_json", "text not null default '[]'")
+    _ensure_column(conn, "structured_extraction_schema_versions", "source_compilation_id", "text")
+    _ensure_column(conn, "structured_extraction_schema_versions", "source_compilation_modified", "integer not null default 0")
+    _ensure_column(conn, "structured_extraction_schema_versions", "global_instructions_json", "text not null default '[]'")
     _ensure_column(conn, "structured_extraction_records", "data_json", "text not null default '{}'")
     _ensure_column(conn, "structured_extraction_review_field_states", "provenance_json", "text not null default '{}'")
     # Block 0: bind persisted evidence to the canonical research-index identity.

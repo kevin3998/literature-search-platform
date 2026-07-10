@@ -281,7 +281,11 @@ class SettingsStore:
             if provider == "openai_compatible" and not str(self.value("models", "base_url", user_id=user_id) or ""):
                 reasons.append("missing_base_url")
             if provider != "ollama" and provider in self.supported_agent_providers() and not self.api_key_configured(provider, user_id=user_id):
-                reasons.append("missing_api_key")
+                active = self._active_model_profile(user_id=user_id)
+                if active and active.get("provider") == provider and active.get("key_status") == "unreadable":
+                    reasons.append("credential_unreadable")
+                else:
+                    reasons.append("missing_api_key")
             if provider == "ollama" and chat_model and not self._ollama_model_available(chat_model, base_url):
                 reasons.append("ollama_model_unavailable")
         ready = not reasons

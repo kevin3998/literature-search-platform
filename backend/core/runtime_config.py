@@ -7,6 +7,7 @@ from core.db.config import DatabaseConfigError, app_env
 
 DEFAULT_DEV_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 DEFAULT_SECRET_KEY_PATH = Path.home() / ".literature-agent" / "secret.key"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def csv_env(name: str) -> list[str]:
@@ -85,7 +86,10 @@ def cookie_secure() -> bool:
 
 
 def secret_key_path() -> Path:
-    return Path(os.getenv("LITERATURE_SECRET_KEY_PATH") or DEFAULT_SECRET_KEY_PATH).expanduser()
+    path = Path(os.getenv("LITERATURE_SECRET_KEY_PATH") or DEFAULT_SECRET_KEY_PATH).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
 
 
 def check_secret_key_policy() -> dict:

@@ -38,3 +38,10 @@ def test_dev_script_runs_postgres_migrations_and_worker():
     assert "python -m core.worker.main" in script
     assert "START_WORKER" in script
     assert "LITERATURE_MEMORY_DB_PATH" not in script
+
+
+def test_dev_script_normalizes_secret_key_path_before_starting_processes():
+    script = Path("dev.sh").read_text(encoding="utf-8")
+
+    assert "normalize_runtime_path" in script
+    assert 'export LITERATURE_SECRET_KEY_PATH="$(normalize_runtime_path "$LITERATURE_SECRET_KEY_PATH")"' in script

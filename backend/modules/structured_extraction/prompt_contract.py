@@ -7,6 +7,7 @@ from core.user_context import UserContext
 
 from .artifacts import write_prompt_contract
 from .schemas import PromptContractCompileRequest
+from .schema_contract import PAPER_METADATA_REGISTRY, is_nested_schema_mode
 from .store import StructuredExtractionStore, dumps, loads, now
 
 EXTRACTION_RULES = [
@@ -139,6 +140,7 @@ class StructuredExtractionPromptContractService:
             "field_groups": loads(row["field_groups_json"], []) or [],
             "field_tree": loads(row["field_tree_json"], []) if "field_tree_json" in row.keys() else [],
             "fields": loads(row["fields_json"], []) or [],
+            "global_instructions": loads(row["global_instructions_json"], []) if "global_instructions_json" in row.keys() else [],
             "field_count": row["field_count"],
             "created_at": row["created_at"],
             "frozen_at": row["frozen_at"],
@@ -173,7 +175,7 @@ def _compile_contract(
     fields = schema["fields"]
     field_groups = schema["field_groups"]
     schema_mode = schema.get("schema_mode") or "flat_fields"
-    if schema_mode == "nested_material":
+    if is_nested_schema_mode(schema_mode):
         field_tree = _sanitize_tree_for_prompt(schema.get("field_tree") or [])
         field_contracts = [_nested_field_contract(field) for field in fields]
         section_contracts = [{"section_key": node.get("key"), "node": node} for node in field_tree]
@@ -206,6 +208,12 @@ def _compile_contract(
         "section_contracts": section_contracts,
         "output_json_contract": output_contract,
         "extraction_rules": extraction_rules,
+        "user_extraction_rules": schema.get("global_instructions") or [],
+        "system_metadata_contract": {
+            "paper_metadata": PAPER_METADATA_REGISTRY,
+            "injection": "platform",
+            "model_must_not_generate": True,
+        },
         "created_at": created_at,
     }
 
@@ -303,19 +311,21 @@ def _output_json_contract(record_schema: dict[str, Any], field_contracts: list[d
 
 
 def _nested_output_json_contract(record_schema: dict[str, Any], field_tree: list[dict[str, Any]]) -> dict[str, Any]:
+    identity = {key: "string" for key in (record_schema.get("record_identity_fields") or ["paper_id"])}
+    example = {
+        "paper_id": "string",
+        "record_id": "string",
+        "record_type": record_schema.get("record_type"),
+        "record_identity": identity,
+        "data": _sample_from_tree(field_tree),
+    }
+    if "material_name" in identity:
+        example["material_name"] = "string"
     return {
         "record_type": record_schema.get("record_type"),
         "record_unit": record_schema.get("record_unit"),
-        "records": [
-            {
-                "paper_id": "string",
-                "material_name": "string",
-                "record_id": "string",
-                "record_type": record_schema.get("record_type"),
-                "record_identity": {"paper_id": "string", "material_name": "string"},
-                "data": _sample_from_tree(field_tree),
-            }
-        ],
+        "paper_metadata": "platform_injected_do_not_generate",
+        "records": [example],
     }
 
 

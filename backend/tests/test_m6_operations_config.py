@@ -43,6 +43,18 @@ def test_secret_key_policy_allows_development_autocreate(monkeypatch, tmp_path):
     assert check_secret_key_policy()["auto_create_allowed"] is True
 
 
+def test_relative_secret_key_path_is_resolved_from_project_root(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from core.runtime_config import secret_key_path
+
+    project_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("LITERATURE_SECRET_KEY_PATH", ".runtime/secret.key")
+    monkeypatch.chdir(tmp_path)
+
+    assert secret_key_path() == project_root / ".runtime" / "secret.key"
+
+
 def test_secret_key_policy_requires_existing_key_in_production(monkeypatch, tmp_path):
     from core.db.config import DatabaseConfigError
     from core.runtime_config import check_secret_key_policy

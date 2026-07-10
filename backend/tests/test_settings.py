@@ -64,6 +64,26 @@ def test_default_limits_are_expanded_for_product_research_turns():
     assert DEFAULTS["memory"]["evidence_limit_multiplier"] == 4
 
 
+def test_readiness_reports_unreadable_active_profile_credential(monkeypatch):
+    from core.settings_store import SettingsStore
+
+    store = object.__new__(SettingsStore)
+    monkeypatch.setattr(store, "model_config", lambda user_id=None: {
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "chat_model": "deepseek-chat",
+    })
+    monkeypatch.setattr(store, "value", lambda scope, key, user_id=None: True if (scope, key) == ("agent", "enabled") else "")
+    monkeypatch.setattr(store, "api_key_source", lambda provider, user_id=None: None)
+    monkeypatch.setattr(store, "api_key_configured", lambda provider, user_id=None: False)
+    monkeypatch.setattr(store, "_active_model_profile", lambda user_id=None: {"provider": "deepseek", "key_status": "unreadable"})
+
+    result = store.readiness(user_id="00000000-0000-4000-8000-000000000001")
+
+    assert result["ready"] is False
+    assert result["reasons"] == ["credential_unreadable"]
+
+
 def test_settings_diagnostics_report_external_source_status(monkeypatch, tmp_path):
     monkeypatch.setenv("LITERATURE_MEMORY_DB_PATH", str(tmp_path / "memory.sqlite"))
     monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "s2-key")

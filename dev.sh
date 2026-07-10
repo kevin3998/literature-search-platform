@@ -29,6 +29,17 @@ export LITERATURE_SECRET_KEY_PATH="${LITERATURE_SECRET_KEY_PATH:-$RUNTIME_DIR/se
 export WORKER_QUEUES="${WORKER_QUEUES:-default,workflow,structured-extraction}"
 export START_WORKER="${START_WORKER:-1}"
 
+normalize_runtime_path() {
+  local value="$1"
+  if [[ "$value" == /* ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s/%s' "$ROOT_DIR" "${value#./}"
+  fi
+}
+
+export LITERATURE_SECRET_KEY_PATH="$(normalize_runtime_path "$LITERATURE_SECRET_KEY_PATH")"
+
 BACKEND_PYTHON="${BACKEND_PYTHON:-/opt/anaconda3/envs/pc_plus/bin/python}"
 if [[ ! -x "$BACKEND_PYTHON" ]]; then
   if command -v python3 >/dev/null 2>&1; then

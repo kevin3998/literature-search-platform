@@ -175,7 +175,8 @@ class ModelProfileStore:
 
     def _row(self, row, *, user_id: str) -> dict[str, Any]:
         secret_type = _CRED_PREFIX + str(row["profile_id"])
-        has_key = self.secrets.has(secret_type, user_id=user_id)
+        key_status = self.secrets.status(secret_type, user_id=user_id)
+        has_key = key_status == "readable"
         return {
             "id": str(row["profile_id"]),
             "profile_id": str(row["profile_id"]),
@@ -185,8 +186,9 @@ class ModelProfileStore:
             "base_url": row["base_url"],
             "model": row["model"],
             "config": json_loads(row["config_json"], {}),
-            "key_masked": self.secrets.preview(secret_type, user_id=user_id) if has_key else "",
+            "key_masked": self.secrets.preview(secret_type, user_id=user_id) if key_status != "missing" else "",
             "has_key": has_key,
+            "key_status": key_status,
             "active": bool(row["active"]),
             "created_at": to_unix_seconds(row["created_at"]),
             "updated_at": to_unix_seconds(row["updated_at"]),

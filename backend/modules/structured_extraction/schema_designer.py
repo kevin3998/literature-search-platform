@@ -7,11 +7,15 @@ from core.user_context import UserContext
 
 from .artifacts import append_schema_event, write_schema_draft, write_schema_version
 from .schemas import SchemaDraftSaveRequest
+from .schema_contract import is_nested_schema_mode
 from .store import StructuredExtractionStore, dumps, loads, now
 
 ALLOWED_RECORD_UNITS = {"paper_level", "material_level", "sample_level", "experiment_level", "condition_level"}
-ALLOWED_FIELD_TYPES = {"string", "number", "boolean", "enum", "multi_enum", "list", "date", "object", "evidence_text"}
-ALLOWED_SCHEMA_MODES = {"flat_fields", "nested_material"}
+ALLOWED_FIELD_TYPES = {
+    "string", "number", "boolean", "enum", "multi_enum", "date", "object",
+    "list_object", "list_string", "dict", "evidence_text", "list",
+}
+ALLOWED_SCHEMA_MODES = {"flat_fields", "nested_material", "nested_record"}
 ALLOWED_TREE_TYPES = {"string", "number", "boolean", "enum", "multi_enum", "date", "object", "list_object", "list_string", "dict", "evidence_text"}
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -38,6 +42,9 @@ class StructuredExtractionSchemaDesigner:
             "field_groups": [],
             "field_tree": [],
             "fields": [],
+            "global_instructions": [],
+            "source_compilation_id": None,
+            "source_compilation_modified": False,
             "status": "draft",
             "validation_errors": [],
             "created_at": ts,
@@ -45,31 +52,56 @@ class StructuredExtractionSchemaDesigner:
             "frozen_at": None,
         }
 
-    def save_draft(self, task_id: str, payload: SchemaDraftSaveRequest, *, user: UserContext) -> dict[str, Any]:
+    def save_draft(
+        self,
+        task_id: str,
+        payload: SchemaDraftSaveRequest,
+        *,
+        user: UserContext,
+        provenance_modified: bool | None = None,
+    ) -> dict[str, Any]:
         task = self.store.get_task(task_id, user_id=user.user_id)
         base_collection_version = task.get("current_collection_version")
         if not base_collection_version:
             raise ValueError("collection_required")
         schema_mode = payload.schema_mode if payload.schema_mode in ALLOWED_SCHEMA_MODES else "flat_fields"
         record_schema = _normalize_record_schema(payload.record_schema or {}, schema_mode=schema_mode)
-        field_tree = _normalize_field_tree(payload.field_tree or []) if schema_mode == "nested_material" else []
-        field_groups = _field_groups_from_tree(field_tree) if schema_mode == "nested_material" else _normalize_field_groups(payload.field_groups or [])
-        fields = _fields_from_tree(field_tree) if schema_mode == "nested_material" else _normalize_fields(payload.fields or [])
+        field_tree = _normalize_field_tree(payload.field_tree or []) if is_nested_schema_mode(schema_mode) else []
+        field_groups = _field_groups_from_tree(field_tree) if is_nested_schema_mode(schema_mode) else _normalize_field_groups(payload.field_groups or [])
+        fields = _fields_from_tree(field_tree) if is_nested_schema_mode(schema_mode) else _normalize_fields(payload.fields or [])
+        global_instructions = _normalize_global_instructions(payload.global_instructions or [])
+        if payload.source_compilation_id:
+            source = self.store.conn.execute(
+                "select compilation_id from structured_extraction_schema_compilations where compilation_id = ? and task_id = ? and user_id = ?",
+                (payload.source_compilation_id, task_id, user.user_id),
+            ).fetchone()
+            if not source:
+                raise ValueError("source_compilation_not_found")
         errors = validate_schema(record_schema, field_groups, fields, schema_mode=schema_mode, field_tree=field_tree)
         if errors:
             raise ValueError(",".join(errors))
         existing = self.store.conn.execute(
-            "select created_at from structured_extraction_schema_drafts where task_id = ? and user_id = ?",
+            "select * from structured_extraction_schema_drafts where task_id = ? and user_id = ?",
             (task_id, user.user_id),
         ).fetchone()
+        source_compilation_modified = _source_compilation_modified(
+            existing,
+            source_compilation_id=payload.source_compilation_id,
+            schema_mode=schema_mode,
+            record_schema=record_schema,
+            field_tree=field_tree,
+            global_instructions=global_instructions,
+            override=provenance_modified,
+        )
         ts = now()
         created_at = existing["created_at"] if existing else ts
         self.store.conn.execute(
             """
             insert into structured_extraction_schema_drafts(
                 task_id, user_id, base_collection_version, schema_mode, record_schema_json, field_groups_json,
-                field_tree_json, fields_json, validation_errors_json, created_at, updated_at
-            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                field_tree_json, fields_json, global_instructions_json, source_compilation_id, source_compilation_modified,
+                validation_errors_json, created_at, updated_at
+            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(task_id) do update set
                 user_id = excluded.user_id,
                 base_collection_version = excluded.base_collection_version,
@@ -78,6 +110,9 @@ class StructuredExtractionSchemaDesigner:
                 field_groups_json = excluded.field_groups_json,
                 field_tree_json = excluded.field_tree_json,
                 fields_json = excluded.fields_json,
+                global_instructions_json = excluded.global_instructions_json,
+                source_compilation_id = excluded.source_compilation_id,
+                source_compilation_modified = excluded.source_compilation_modified,
                 validation_errors_json = excluded.validation_errors_json,
                 updated_at = excluded.updated_at
             """,
@@ -90,6 +125,9 @@ class StructuredExtractionSchemaDesigner:
                 dumps(field_groups),
                 dumps(field_tree),
                 dumps(fields),
+                dumps(global_instructions),
+                payload.source_compilation_id,
+                source_compilation_modified,
                 dumps([]),
                 created_at,
                 ts,
@@ -123,8 +161,9 @@ class StructuredExtractionSchemaDesigner:
             """
             insert into structured_extraction_schema_versions(
                 task_id, schema_version, user_id, base_collection_version, schema_mode, record_schema_json,
-                field_groups_json, field_tree_json, fields_json, field_count, change_summary_json, created_at, frozen_at
-            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                field_groups_json, field_tree_json, fields_json, global_instructions_json, source_compilation_id, source_compilation_modified,
+                field_count, change_summary_json, created_at, frozen_at
+            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -136,8 +175,16 @@ class StructuredExtractionSchemaDesigner:
                 dumps(draft["field_groups"]),
                 dumps(draft.get("field_tree") or []),
                 dumps(draft["fields"]),
+                dumps(draft.get("global_instructions") or []),
+                draft.get("source_compilation_id"),
+                bool(draft.get("source_compilation_modified")),
                 field_count,
-                dumps({"source": "draft", "field_count": field_count}),
+                dumps({
+                    "source": "draft",
+                    "field_count": field_count,
+                    "source_compilation_id": draft.get("source_compilation_id"),
+                    "source_compilation_modified": bool(draft.get("source_compilation_modified")),
+                }),
                 ts,
                 ts,
             ),
@@ -183,8 +230,15 @@ class StructuredExtractionSchemaDesigner:
             field_groups=version["field_groups"],
             field_tree=version.get("field_tree") or [],
             fields=version["fields"],
+            global_instructions=version.get("global_instructions") or [],
+            source_compilation_id=version.get("source_compilation_id"),
         )
-        draft = self.save_draft(task_id, payload, user=user)
+        draft = self.save_draft(
+            task_id,
+            payload,
+            user=user,
+            provenance_modified=bool(version.get("source_compilation_modified")),
+        )
         ts = now()
         self._insert_event(task_id, schema_version, user.user_id, "version_duplicated_to_draft", {}, ts=ts)
         self.store.conn.commit()
@@ -232,6 +286,9 @@ class StructuredExtractionSchemaDesigner:
             "field_groups": loads(row["field_groups_json"], []) or [],
             "field_tree": loads(row["field_tree_json"], []) if "field_tree_json" in row.keys() else [],
             "fields": loads(row["fields_json"], []) or [],
+            "global_instructions": loads(row["global_instructions_json"], []) if "global_instructions_json" in row.keys() else [],
+            "source_compilation_id": str(row["source_compilation_id"]) if "source_compilation_id" in row.keys() and row["source_compilation_id"] else None,
+            "source_compilation_modified": bool(row["source_compilation_modified"]) if "source_compilation_modified" in row.keys() else False,
             "status": "draft",
             "validation_errors": loads(row["validation_errors_json"], []) or [],
             "created_at": row["created_at"],
@@ -250,6 +307,9 @@ class StructuredExtractionSchemaDesigner:
             "field_groups": loads(row["field_groups_json"], []) or [],
             "field_tree": loads(row["field_tree_json"], []) if "field_tree_json" in row.keys() else [],
             "fields": loads(row["fields_json"], []) or [],
+            "global_instructions": loads(row["global_instructions_json"], []) if "global_instructions_json" in row.keys() else [],
+            "source_compilation_id": str(row["source_compilation_id"]) if "source_compilation_id" in row.keys() and row["source_compilation_id"] else None,
+            "source_compilation_modified": bool(row["source_compilation_modified"]) if "source_compilation_modified" in row.keys() else False,
             "field_count": row["field_count"],
             "change_summary": loads(row["change_summary_json"], {}) or {},
             "status": "frozen",
@@ -258,6 +318,33 @@ class StructuredExtractionSchemaDesigner:
             "updated_at": row["frozen_at"],
             "frozen_at": row["frozen_at"],
         }
+
+
+def _source_compilation_modified(
+    existing,
+    *,
+    source_compilation_id: str | None,
+    schema_mode: str,
+    record_schema: dict[str, Any],
+    field_tree: list[dict[str, Any]],
+    global_instructions: list[dict[str, Any]],
+    override: bool | None,
+) -> bool:
+    if override is not None:
+        return bool(override)
+    if not source_compilation_id:
+        return False
+    if not existing or not existing["source_compilation_id"] or str(existing["source_compilation_id"]) != str(source_compilation_id):
+        return True
+    previous = (
+        existing["schema_mode"],
+        loads(existing["record_schema_json"], {}) or {},
+        loads(existing["field_tree_json"], []) or [],
+        loads(existing["global_instructions_json"], []) or [],
+    )
+    current = (schema_mode, record_schema, field_tree, global_instructions)
+    already_modified = bool(existing["source_compilation_modified"]) if "source_compilation_modified" in existing.keys() else False
+    return already_modified or previous != current
 
 
 def validate_schema(record_schema: dict[str, Any], field_groups: list[dict[str, Any]], fields: list[dict[str, Any]], *, schema_mode: str = "flat_fields", field_tree: list[dict[str, Any]] | None = None) -> list[str]:
@@ -273,6 +360,9 @@ def validate_schema(record_schema: dict[str, Any], field_groups: list[dict[str, 
     identity_fields = set(record_schema.get("record_identity_fields") or [])
     deduplication_keys = set(record_schema.get("deduplication_keys") or [])
     primary_entity = (record_schema.get("primary_entity") or "").strip()
+    if is_nested_schema_mode(schema_mode):
+        tree_errors = _validate_field_tree(field_tree or [], reserved_keys=identity_fields | {"paper_id"})
+        errors.extend(tree_errors)
     if schema_mode == "nested_material":
         if record_schema.get("record_type") != "material_record":
             errors.append("nested_material_record_type_required")
@@ -284,8 +374,6 @@ def validate_schema(record_schema: dict[str, Any], field_groups: list[dict[str, 
             errors.append("nested_material_identity_requires_material_name")
         if "material_name" not in deduplication_keys:
             errors.append("nested_material_deduplication_requires_material_name")
-        tree_errors = _validate_field_tree(field_tree or [])
-        errors.extend(tree_errors)
         if any(node.get("key") in {"paper_id", "material_name"} for node in (field_tree or [])):
             errors.append("nested_material_field_tree_must_not_include_identity_fields")
     if record_unit and record_unit != "paper_level":
@@ -322,14 +410,16 @@ def validate_schema(record_schema: dict[str, Any], field_groups: list[dict[str, 
     return errors
 
 
-def _validate_field_tree(nodes: list[dict[str, Any]], *, path: str = "") -> list[str]:
+def _validate_field_tree(nodes: list[dict[str, Any]], *, reserved_keys: set[str], path: str = "") -> list[str]:
     errors: list[str] = []
     keys: set[str] = set()
     for node in nodes:
         key = node.get("key") or ""
         node_path = f"{path}.{key}" if path else key
-        if key in {"paper_id", "material_name"}:
+        if key in reserved_keys:
             errors.append(f"identity_field_not_allowed_in_tree:{node_path}")
+        if re.fullmatch(r"req_\d+", key, flags=re.IGNORECASE):
+            errors.append(f"internal_requirement_id_not_allowed:{node_path}")
         if not _KEY_RE.match(key):
             errors.append(f"invalid_tree_key:{node_path}")
         if key in keys:
@@ -342,7 +432,7 @@ def _validate_field_tree(nodes: list[dict[str, Any]], *, path: str = "") -> list
         if node_type in {"object", "list_object"} and not children:
             errors.append(f"tree_node_requires_children:{node_path}")
         if children:
-            errors.extend(_validate_field_tree(children, path=node_path))
+            errors.extend(_validate_field_tree(children, reserved_keys=reserved_keys, path=node_path))
     return errors
 
 
@@ -383,6 +473,24 @@ def _normalize_record_schema(raw: dict[str, Any], *, schema_mode: str = "flat_fi
     base["deduplication_keys"] = _string_list(base.get("deduplication_keys"))
     base["parent_record_type"] = str(base.get("parent_record_type") or "").strip() or None
     return base
+
+
+def _normalize_global_instructions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    seen: set[str] = set()
+    for index, item in enumerate(items or [], start=1):
+        text_value = str(item.get("text") or "").strip()
+        if not text_value:
+            continue
+        requirement_id = str(item.get("requirement_id") or f"manual_instruction_{index}")
+        if requirement_id in seen:
+            continue
+        seen.add(requirement_id)
+        category = str(item.get("category") or "extraction")
+        if category not in {"selection", "grouping", "extraction", "constraint", "other"}:
+            category = "other"
+        out.append({"requirement_id": requirement_id, "category": category, "text": text_value})
+    return out
 
 
 def _tree_node(key: str, label: str, node_type: str, *, order: int, required: bool = False, description: str = "", instruction: str = "", allowed_values: list[str] | None = None, children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -432,6 +540,9 @@ def _normalize_tree_node(node: dict[str, Any], order: int) -> dict[str, Any]:
         "notes": str(node.get("notes") or ""),
         "order": _int(node.get("order"), order),
         "children": sorted(children, key=lambda item: item["order"]),
+        "source_requirement_ids": _string_list(node.get("source_requirement_ids") or node.get("sourceRequirementIds")),
+        "origin": str(node.get("origin") or "manual"),
+        "confidence": node.get("confidence"),
     }
 
 

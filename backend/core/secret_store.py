@@ -17,13 +17,10 @@ from sqlalchemy.engine import Engine
 from core.db.config import DatabaseConfigError, app_env
 from core.db.engine import create_engine_from_env
 from core.db.types import new_uuid, utc_now, uuid_value
-
-DEFAULT_DIR = Path.home() / ".literature-agent"
-DEFAULT_KEY_PATH = DEFAULT_DIR / "secret.key"
-
+from core.runtime_config import secret_key_path
 
 def _key_path() -> Path:
-    return Path(os.getenv("LITERATURE_SECRET_KEY_PATH") or DEFAULT_KEY_PATH).expanduser()
+    return secret_key_path()
 
 
 class SecretStore:
@@ -138,7 +135,30 @@ class SecretStore:
         return bool(result.rowcount)
 
     def has(self, secret_type: str, *, user_id: str | None = None) -> bool:
-        return bool(self.preview(secret_type, user_id=user_id))
+        return self.status(secret_type, user_id=user_id) == "readable"
+
+    def status(self, secret_type: str, *, user_id: str | None = None) -> str:
+        owner = _user_id(user_id)
+        with self.engine.connect() as conn:
+            encrypted = conn.execute(
+                text(
+                    """
+                    select encrypted_value
+                    from user_secrets
+                    where user_id = :user_id and secret_type = :secret_type
+                    order by updated_at desc
+                    limit 1
+                    """
+                ),
+                {"user_id": uuid_value(owner), "secret_type": secret_type},
+            ).scalar_one_or_none()
+        if not encrypted:
+            return "missing"
+        try:
+            self._fernet().decrypt(str(encrypted).encode("utf-8"))
+        except InvalidToken:
+            return "unreadable"
+        return "readable"
 
     def providers(self, *, user_id: str | None = None) -> list[str]:
         owner = _user_id(user_id)
@@ -147,7 +167,7 @@ class SecretStore:
                 text("select secret_type from user_secrets where user_id = :user_id order by secret_type"),
                 {"user_id": uuid_value(owner)},
             ).scalars().all()
-        return [str(row) for row in rows]
+        return [str(row) for row in rows if self.status(str(row), user_id=owner) == "readable"]
 
     def _fernet(self) -> Fernet:
         if self.key_path.exists():

@@ -262,7 +262,8 @@ def _export_records(rows: list[dict[str, Any]], fields: list[dict[str, Any]], se
                 "record_id": row.get("record_id"),
                 "run_id": row.get("run_id"),
                 "paper_id": row.get("paper_id"),
-                "paper": row.get("paper") or {},
+                "paper_metadata": row.get("paper_metadata") or row.get("paper") or {},
+                "paper": row.get("paper_metadata") or row.get("paper") or {},
                 "record_type": row.get("record_type"),
                 "record_index": row.get("record_index"),
                 "record_identity": row.get("record_identity") or {},
@@ -282,7 +283,7 @@ def _flat_rows(records: list[dict[str, Any]], fields: list[dict[str, Any]]) -> t
     flat = []
     long = []
     for record in records:
-        paper = record.get("paper") or {}
+        paper = record.get("paper_metadata") or record.get("paper") or {}
         row = {
             "record_id": record.get("record_id"),
             "run_id": record.get("run_id"),
@@ -291,6 +292,7 @@ def _flat_rows(records: list[dict[str, Any]], fields: list[dict[str, Any]]) -> t
             "year": paper.get("year") or "",
             "journal": paper.get("journal") or "",
             "doi": paper.get("doi") or "",
+            "authors_json": _json_cell(paper.get("authors") or []),
             "record_type": record.get("record_type") or "",
             "record_index": record.get("record_index") or "",
             "record_identity_json": _json_cell(record.get("record_identity") or {}),
@@ -439,7 +441,7 @@ def _markdown_text(export_id: str, task: dict[str, Any], run: dict[str, Any], re
         "",
     ]
     for record in records:
-        paper = record.get("paper") or {}
+        paper = record.get("paper_metadata") or record.get("paper") or {}
         lines.extend(
             [
                 f"## {paper.get('title') or record.get('paper_id')}",

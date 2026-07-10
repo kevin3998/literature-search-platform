@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from core.user_context import UserContext, current_user
+from core.worker.queue import JobQueue
 from modules.structured_extraction.schemas import (
     BulkCandidateDecisionRequest,
     CandidateDecisionRequest,
@@ -22,6 +26,8 @@ from modules.structured_extraction.schemas import (
     ReviewSuggestionActionRequest,
     ReviewSuggestionBulkRequest,
     SchemaAssistRequest,
+    SchemaCompilationApplyRequest,
+    SchemaCompilationResolveRequest,
     SchemaDraftSaveRequest,
     TaskArchiveRequest,
     TaskCreateRequest,
@@ -39,6 +45,7 @@ from modules.structured_extraction.shared import (
     structured_extraction_review_service,
     structured_extraction_run_service,
     structured_extraction_schema_designer,
+    structured_extraction_schema_compilation_store,
     structured_extraction_store,
 )
 
@@ -275,7 +282,143 @@ def save_schema_draft(task_id: str, payload: SchemaDraftSaveRequest, user: UserC
 async def schema_assist(task_id: str, payload: SchemaAssistRequest, user: UserContext = Depends(current_structured_user)):
     try:
         task = structured_extraction_store.get_task(task_id, user_id=user.user_id)
-        return await assist_schema(payload, task=task, user=user)
+        response = await assist_schema(payload, task=task, user=user)
+        if payload.action == "parse_field_definition" and isinstance(response.get("result"), dict):
+            stored = structured_extraction_schema_compilation_store.create(task_id, payload.instruction, response["result"], user=user)
+            response["result"] = stored
+            response["status"] = stored["status"]
+        return response
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@router.post("/tasks/{task_id}/schema/compilations", status_code=202)
+def start_schema_compilation(task_id: str, payload: SchemaAssistRequest, user: UserContext = Depends(current_structured_user)):
+    try:
+        if payload.action != "parse_field_definition":
+            raise ValueError("schema_compilation_requires_parse_field_definition")
+        compilation, reused = structured_extraction_schema_compilation_store.queue(
+            task_id,
+            payload.model_dump(mode="json"),
+            user=user,
+        )
+        return {
+            **compilation,
+            "reused": reused,
+            "stream_url": f"/api/structured-extraction/tasks/{task_id}/schema/compilations/{compilation['compilation_id']}/stream",
+        }
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@router.get("/tasks/{task_id}/schema/compilations")
+def list_schema_compilations(task_id: str, limit: int = 20, user: UserContext = Depends(current_structured_user)):
+    try:
+        return structured_extraction_schema_compilation_store.list(task_id, user=user, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@router.get("/tasks/{task_id}/schema/compilations/{compilation_id}")
+def get_schema_compilation(task_id: str, compilation_id: str, user: UserContext = Depends(current_structured_user)):
+    try:
+        return structured_extraction_schema_compilation_store.get(task_id, compilation_id, user=user)
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@router.get("/tasks/{task_id}/schema/compilations/{compilation_id}/stream")
+async def stream_schema_compilation(
+    task_id: str,
+    compilation_id: str,
+    after: int = 0,
+    user: UserContext = Depends(current_structured_user),
+):
+    try:
+        compilation = structured_extraction_schema_compilation_store.get(task_id, compilation_id, user=user)
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+    async def events():
+        job_id = compilation.get("core_job_id")
+        if not job_id:
+            yield f"data: {json.dumps({'type': 'snapshot', 'compilation': compilation}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            return
+        queue = JobQueue(structured_extraction_store.engine)
+        previous_events = queue.events(job_id, after=0, user_id=user.user_id)
+        index = int(previous_events[-1].get("_event_index", -1)) + 1 if previous_events else max(0, after)
+        current = structured_extraction_schema_compilation_store.get(task_id, compilation_id, user=user)
+        job = queue.get(job_id, user_id=user.user_id)
+        if current["execution_status"] in {"queued", "running"} and job["status"] == "failed":
+            current = structured_extraction_schema_compilation_store.fail(
+                task_id,
+                compilation_id,
+                phase=current["phase"],
+                error=RuntimeError(job.get("error") or "schema compilation worker failed"),
+                user=user,
+            )
+        yield f"data: {json.dumps({'type': 'snapshot', 'compilation': current}, ensure_ascii=False)}\n\n"
+        if current["execution_status"] in {"completed", "failed"}:
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            return
+        while True:
+            for event in queue.events(job_id, after=index, user_id=user.user_id):
+                index = int(event.get("_event_index", index)) + 1
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") == "done":
+                    current = structured_extraction_schema_compilation_store.get(task_id, compilation_id, user=user)
+                    job = queue.get(job_id, user_id=user.user_id)
+                    if current["execution_status"] in {"queued", "running"} and job["status"] == "failed":
+                        structured_extraction_schema_compilation_store.fail(
+                            task_id,
+                            compilation_id,
+                            phase=current["phase"],
+                            error=RuntimeError(job.get("error") or "schema compilation worker failed"),
+                            user=user,
+                        )
+                    return
+            current = structured_extraction_schema_compilation_store.get(task_id, compilation_id, user=user)
+            if current["execution_status"] in {"completed", "failed"} and queue.get(job_id, user_id=user.user_id)["status"] in {"completed", "failed"}:
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                return
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/tasks/{task_id}/schema/compilations/{compilation_id}/resolve")
+def resolve_schema_compilation(
+    task_id: str,
+    compilation_id: str,
+    payload: SchemaCompilationResolveRequest,
+    user: UserContext = Depends(current_structured_user),
+):
+    try:
+        return structured_extraction_schema_compilation_store.resolve(task_id, compilation_id, payload, user=user)
+    except Exception as exc:  # noqa: BLE001
+        _handle_error(exc)
+
+
+@router.post("/tasks/{task_id}/schema/compilations/{compilation_id}/apply")
+def apply_schema_compilation(
+    task_id: str,
+    compilation_id: str,
+    payload: SchemaCompilationApplyRequest | None = None,
+    user: UserContext = Depends(current_structured_user),
+):
+    try:
+        return structured_extraction_schema_compilation_store.apply(
+            task_id,
+            compilation_id,
+            payload or SchemaCompilationApplyRequest(),
+            user=user,
+            schema_designer=structured_extraction_schema_designer,
+        )
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 

@@ -20,6 +20,8 @@ test("settings model profiles keep actions visible and offer supported DeepSeek 
   assert.match(source, /deepseek-reasoner/);
   assert.ok(source.includes("deepseek-model-options"));
   assert.match(source, /data-testid=\"model-profile-actions\"/);
+  assert.match(source, /credential_unreadable/);
+  assert.match(source, /密钥无法解密，点编辑重新保存/);
   assert.ok(!source.includes('<table className="w-full text-[13px]">'));
 });
 

@@ -81,9 +81,12 @@ def test_export_creates_files_downloads_and_snapshots_effective_records(monkeypa
     exported_json = json.loads(json_path.read_text(encoding="utf-8"))
     assert exported_json["records"][0]["fields"]["water_flux"]["normalized_value"] == 121
     assert exported_json["records"][0]["paper"]["title"] == "Antifouling membrane performance"
+    assert exported_json["records"][0]["paper_metadata"] == exported_json["records"][0]["paper"]
+    assert exported_json["records"][0]["paper_metadata"]["authors"] == ["Alice"]
 
     rows = list(csv.DictReader(csv_path.open(encoding="utf-8-sig")))
     assert rows[0]["title"] == "Antifouling membrane performance"
+    assert json.loads(rows[0]["authors_json"]) == ["Alice"]
     assert rows[0]["water_flux.normalized"] == "121"
     assert rows[0]["water_flux.evidence_text"] == "manual correction from table"
     assert "membrane_name.raw" in rows[0]

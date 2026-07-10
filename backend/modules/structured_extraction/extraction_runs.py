@@ -11,6 +11,7 @@ from .artifacts import write_extraction_run
 from .artifacts import write_task_manifest
 from . import llm_extraction
 from .schemas import DEFAULT_TASK_STATS, ExtractionRunResumeRequest, ExtractionRunStartRequest
+from .schema_contract import is_nested_schema_mode
 from .store import StructuredExtractionStore, dumps, loads, new_uuid, now
 
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
@@ -132,7 +133,7 @@ class StructuredExtractionRunService:
         return {"task_id": task_id, "run_id": run_id, "items": [self._row_to_item(row) for row in rows]}
 
     def list_records(self, task_id: str, run_id: str, *, user: UserContext) -> dict[str, Any]:
-        self.get(task_id, run_id, user=user)
+        run = self.get(task_id, run_id, user=user)
         rows = self.store.conn.execute(
             """
             select * from structured_extraction_records
@@ -141,7 +142,35 @@ class StructuredExtractionRunService:
             """,
             (task_id, user.user_id, run_id),
         ).fetchall()
-        return {"task_id": task_id, "run_id": run_id, "records": [self._row_to_record(row) for row in rows]}
+        paper_map = self._paper_metadata_map(task_id, run["collection_version"])
+        records = []
+        for row in rows:
+            record = self._row_to_record(row)
+            metadata = paper_map.get(record["paper_id"], {"paper_id": record["paper_id"]})
+            record["paper_metadata"] = metadata
+            record["paper"] = metadata
+            records.append(record)
+        return {"task_id": task_id, "run_id": run_id, "records": records}
+
+    def _paper_metadata_map(self, task_id: str, collection_version: str) -> dict[str, dict[str, Any]]:
+        rows = self.store.conn.execute(
+            "select paper_id, paper_ref_json from structured_extraction_collection_papers where task_id = ? and collection_version = ?",
+            (task_id, collection_version),
+        ).fetchall()
+        out = {}
+        for row in rows:
+            ref = loads(row["paper_ref_json"], {}) or {}
+            out[row["paper_id"]] = {
+                "paper_id": row["paper_id"],
+                "title": ref.get("title") or "",
+                "doi": ref.get("doi") or "",
+                "year": ref.get("year"),
+                "journal": ref.get("journal") or "",
+                "authors": ref.get("authors") or [],
+                "source_path": ref.get("source_path") or "",
+                "index_version": ref.get("index_version"),
+            }
+        return out
 
     def cancel(self, task_id: str, run_id: str, *, user: UserContext) -> dict[str, Any]:
         run = self.get(task_id, run_id, user=user)
@@ -369,7 +398,7 @@ class StructuredExtractionRunService:
                     },
                 )
                 target["record_identity"].update(identity)
-                if schema_mode == "nested_material":
+                if is_nested_schema_mode(schema_mode):
                     _deep_merge(target["data"], record.get("data") or {})
                     target["fields"].update(_top_level_fields(record.get("data") or {}))
                 else:
@@ -714,7 +743,7 @@ def _packet_item_from_row(row) -> dict[str, Any]:
 
 
 def _sort_packet_items(items: list[dict[str, Any]], contract: dict[str, Any]) -> list[dict[str, Any]]:
-    if (contract.get("schema_mode") or "flat_fields") != "nested_material":
+    if not is_nested_schema_mode(contract.get("schema_mode") or "flat_fields"):
         return items
     section_order = {
         section.get("section_key"): idx
@@ -745,9 +774,13 @@ def _normalize_item_records(parsed: dict[str, Any], packet_item: dict[str, Any],
             quality_flags = [str(quality_flags)]
         data = {}
         fields = {}
-        if schema_mode == "nested_material":
-            data = _normalize_nested_data(record.get("data") or record.get("fields") or {}, packet_item.get("field_group"))
-            if not identity.get("material_name"):
+        if is_nested_schema_mode(schema_mode):
+            data = _normalize_nested_data(
+                record.get("data") or record.get("fields") or {},
+                packet_item.get("field_group"),
+                identity_fields,
+            )
+            if any(not identity.get(field) for field in identity_fields if field != "paper_id"):
                 quality_flags.append("missing_record_identity")
             fields = _top_level_fields(data)
         else:
@@ -770,11 +803,12 @@ def _normalize_item_records(parsed: dict[str, Any], packet_item: dict[str, Any],
     return {"records": records}
 
 
-def _normalize_nested_data(value: Any, section_key: str | None) -> dict[str, Any]:
+def _normalize_nested_data(value: Any, section_key: str | None, identity_fields: list[str]) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    data = {key: val for key, val in value.items() if key not in {"paper_id", "material_name"}}
-    if section_key and section_key not in data and section_key != "material_name":
+    excluded = {"paper_id", "paper_metadata", *identity_fields}
+    data = {key: val for key, val in value.items() if key not in excluded}
+    if section_key and section_key not in data and section_key not in excluded:
         section_value = dict(data)
         data = {section_key: section_value}
     return {key: val for key, val in data.items() if val is not None}

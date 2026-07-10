@@ -11,6 +11,7 @@ def build_structured_extraction_registry(
     evidence_packet_service=None,
     run_service=None,
     multimodal_review_service=None,
+    schema_compilation_service=None,
     engine: Engine | None = None,
 ) -> HandlerRegistry:
     registry = HandlerRegistry()
@@ -19,6 +20,7 @@ def build_structured_extraction_registry(
         evidence_packet_service=evidence_packet_service,
         run_service=run_service,
         multimodal_review_service=multimodal_review_service,
+        schema_compilation_service=schema_compilation_service,
         engine=engine,
     )
     return registry
@@ -30,18 +32,21 @@ def register_structured_extraction_handlers(
     evidence_packet_service=None,
     run_service=None,
     multimodal_review_service=None,
+    schema_compilation_service=None,
     engine: Engine | None = None,
 ) -> None:
-    if evidence_packet_service is None or run_service is None or multimodal_review_service is None:
+    if evidence_packet_service is None or run_service is None or multimodal_review_service is None or schema_compilation_service is None:
         from .shared import (
             structured_extraction_evidence_packet_service,
             structured_extraction_multimodal_review_service,
             structured_extraction_run_service,
+            structured_extraction_schema_compilation_store,
         )
 
         evidence_packet_service = evidence_packet_service or structured_extraction_evidence_packet_service
         run_service = run_service or structured_extraction_run_service
         multimodal_review_service = multimodal_review_service or structured_extraction_multimodal_review_service
+        schema_compilation_service = schema_compilation_service or structured_extraction_schema_compilation_store
 
     registry.register(
         "structured.evidence_packet_build",
@@ -54,6 +59,10 @@ def register_structured_extraction_handlers(
     registry.register(
         "structured.multimodal_review",
         lambda job, _context: _run_multimodal_review(multimodal_review_service, job),
+    )
+    registry.register(
+        "structured.schema_compile",
+        lambda job, _context: _run_schema_compile(schema_compilation_service, job),
     )
 
 
@@ -74,3 +83,9 @@ def _run_multimodal_review(service, job) -> dict:
     user = UserContext(user_id=payload["user_id"], workspace_slug=payload["user_id"])
     service._run_job(payload["task_id"], payload["run_id"], payload["job_id"], user)  # noqa: SLF001
     return {"task_id": payload["task_id"], "run_id": payload["run_id"], "job_id": payload["job_id"]}
+
+
+def _run_schema_compile(service, job) -> dict:
+    payload = job.get("payload") or {}
+    compilation = service.worker_entry(payload["task_id"], payload["compilation_id"], payload["user_id"])
+    return {"task_id": payload["task_id"], "compilation_id": compilation["compilation_id"], "status": compilation["status"]}

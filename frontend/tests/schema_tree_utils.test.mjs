@@ -9,9 +9,34 @@ import {
   normalizeTree,
   sampleNode,
   sampleRecord,
+  schemaResolutionDefaults,
   uniqueNodeKey,
   treeStats,
 } from "../src/components/structured-extraction/schemaTreeUtils.js";
+
+test("schema resolution defaults keep internal requirement ids out of user fields", () => {
+  assert.deepEqual(
+    schemaResolutionDefaults({
+      requirementId: "req_0010",
+      kind: "recordIdentity",
+      rawName: "MaterialName",
+      constraints: [{ type: "identityCandidates", values: ["MaterialName", "Details"] }],
+    }),
+    {
+      disposition: "record_identity",
+      targetPath: "record_identity.material_name",
+      fieldName: "MaterialName",
+    },
+  );
+  assert.deepEqual(
+    schemaResolutionDefaults({ requirementId: "req_0011", kind: "selectionRule", rawName: "" }),
+    { disposition: "global_instruction", targetPath: "", fieldName: "" },
+  );
+  assert.deepEqual(
+    schemaResolutionDefaults({ requirementId: "req_0012", kind: "field", rawName: "" }),
+    { disposition: "user_schema", targetPath: "", fieldName: "" },
+  );
+});
 
 test("normalizeTree removes system identity fields and UI-only unit/example metadata", () => {
   const tree = normalizeTree([

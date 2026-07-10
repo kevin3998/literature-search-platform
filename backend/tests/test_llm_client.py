@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.llm.client import OpenAIClient
+from core.llm.client import OpenAIClient, _safe_json
 
 
 def test_max_tokens_omitted_when_non_positive():
@@ -17,3 +17,10 @@ def test_max_tokens_included_when_positive():
     kwargs = client._request_kwargs([], [{"type": "function", "function": {"name": "f"}}])
     assert kwargs["max_tokens"] == 2048
     assert kwargs["tool_choice"] == "auto"
+
+
+def test_streamed_tool_arguments_are_parsed_as_json():
+    assert _safe_json('{"record_schema":{"record_type":"trial"}}') == {
+        "record_schema": {"record_type": "trial"}
+    }
+    assert _safe_json("not-json") == {}

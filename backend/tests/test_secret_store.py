@@ -45,3 +45,10 @@ def test_wrong_master_key_cannot_decrypt(tmp_path):
     other = SecretStore(key_path=tmp_path / "other.key", store_path=tmp_path / "secrets.enc")
     assert other.get("openai") is None
     assert other.providers() == []
+
+
+def test_has_requires_a_decryptable_secret(monkeypatch):
+    store = object.__new__(SecretStore)
+    monkeypatch.setattr(store, "status", lambda _secret_type, user_id=None: "unreadable")
+
+    assert store.has("deepseek") is False

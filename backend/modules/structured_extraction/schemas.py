@@ -117,7 +117,7 @@ class LLMScreenRequest(BaseModel):
 
 
 RecordUnit = Literal["paper_level", "material_level", "sample_level", "experiment_level", "condition_level"]
-FieldType = Literal["string", "number", "boolean", "enum", "multi_enum", "list", "date", "object", "evidence_text"]
+FieldType = Literal["string", "number", "boolean", "enum", "multi_enum", "date", "object", "list_object", "list_string", "dict", "evidence_text"]
 SchemaAssistAction = Literal["suggest_fields", "rewrite_field", "split_field", "merge_fields", "generate_examples", "parse_field_definition"]
 
 
@@ -127,6 +127,8 @@ class SchemaDraftSaveRequest(BaseModel):
     field_groups: list[dict[str, Any]] = Field(default_factory=list)
     field_tree: list[dict[str, Any]] = Field(default_factory=list)
     fields: list[dict[str, Any]] = Field(default_factory=list)
+    global_instructions: list[dict[str, Any]] = Field(default_factory=list)
+    source_compilation_id: str | None = None
 
 
 class SchemaAssistRequest(BaseModel):
@@ -135,6 +137,23 @@ class SchemaAssistRequest(BaseModel):
     draft: dict[str, Any] | None = None
     field: dict[str, Any] | None = None
     fields: list[dict[str, Any]] = Field(default_factory=list)
+    source_format: Literal["auto", "json", "markdown", "natural_language"] = "auto"
+
+
+class SchemaCompilationResolution(BaseModel):
+    requirement_id: str
+    disposition: Literal["user_schema", "system_metadata", "record_identity", "constraint", "global_instruction", "ignored_with_reason"]
+    target_path: str = ""
+    reason: str = ""
+    node: dict[str, Any] | None = None
+
+
+class SchemaCompilationResolveRequest(BaseModel):
+    resolutions: list[SchemaCompilationResolution] = Field(default_factory=list)
+
+
+class SchemaCompilationApplyRequest(BaseModel):
+    mode: Literal["replace", "merge"] = "replace"
 
 
 class PromptContractCompileRequest(BaseModel):

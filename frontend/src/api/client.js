@@ -410,6 +410,9 @@ export function normalizeExtractionSchema(raw) {
     fieldTree: (raw.field_tree || raw.fieldTree || []).map(camelizeObject),
     fieldGroups: (raw.field_groups || raw.fieldGroups || []).map(camelizeObject),
     fields: (raw.fields || []).map(camelizeObject),
+    globalInstructions: (raw.global_instructions || raw.globalInstructions || []).map(camelizeObject),
+    sourceCompilationId: raw.source_compilation_id ?? raw.sourceCompilationId ?? null,
+    sourceCompilationModified: raw.source_compilation_modified ?? raw.sourceCompilationModified ?? false,
     fieldCount: raw.field_count ?? raw.fieldCount ?? (raw.fields || []).length,
     changeSummary: camelizeObject(raw.change_summary || raw.changeSummary || {}),
     status: raw.status || "draft",
@@ -427,6 +430,34 @@ function schemaDraftPayload(payload = {}) {
     field_tree: snakeizeObject(payload.field_tree || payload.fieldTree || []),
     field_groups: snakeizeObject(payload.field_groups || payload.fieldGroups || []),
     fields: snakeizeObject(payload.fields || []),
+    global_instructions: snakeizeObject(payload.global_instructions || payload.globalInstructions || []),
+    source_compilation_id: payload.source_compilation_id || payload.sourceCompilationId || null,
+  };
+}
+
+export function normalizeSchemaCompilation(raw) {
+  return {
+    ...camelizeObject(raw || {}),
+    compilationId: raw.compilation_id || raw.compilationId,
+    taskId: raw.task_id || raw.taskId,
+    executionStatus: raw.execution_status || raw.executionStatus || "completed",
+    phase: raw.phase || "completed",
+    progress: Number(raw.progress ?? 0),
+    coreJobId: raw.core_job_id || raw.coreJobId || null,
+    sourceText: raw.source_text ?? raw.sourceText ?? "",
+    request: camelizeObject(raw.request || {}),
+    error: camelizeObject(raw.error || null),
+    startedAt: raw.started_at ?? raw.startedAt ?? null,
+    updatedAt: raw.updated_at ?? raw.updatedAt ?? null,
+    completedAt: raw.completed_at ?? raw.completedAt ?? null,
+    fieldTree: (raw.field_tree || raw.fieldTree || []).map(camelizeObject),
+    recordSchema: camelizeObject(raw.record_schema || raw.recordSchema || {}),
+    globalInstructions: (raw.global_instructions || raw.globalInstructions || []).map(camelizeObject),
+    requirementMappings: (raw.requirement_mappings || raw.requirementMappings || []).map(camelizeObject),
+    validationErrors: (raw.validation_errors || raw.validationErrors || []).map(camelizeObject),
+    normalizationChanges: (raw.normalization_changes || raw.normalizationChanges || []).map(camelizeObject),
+    paperMetadataFields: raw.paper_metadata_fields || raw.paperMetadataFields || [],
+    systemMetadataKeys: Object.keys(raw.system_metadata_contract || raw.systemMetadataContract || {}),
   };
 }
 
@@ -450,6 +481,8 @@ export function normalizePromptContract(raw) {
     sectionContracts: (raw.section_contracts || raw.sectionContracts || []).map(camelizeObject),
     outputJsonContract: camelizeObject(raw.output_json_contract || raw.outputJsonContract || {}),
     extractionRules: raw.extraction_rules || raw.extractionRules || [],
+    userExtractionRules: (raw.user_extraction_rules || raw.userExtractionRules || []).map(camelizeObject),
+    systemMetadataContract: camelizeObject(raw.system_metadata_contract || raw.systemMetadataContract || {}),
     createdAt: raw.created_at ?? raw.createdAt ?? null,
   };
 }
@@ -617,10 +650,13 @@ function normalizeExtractionRunItems(raw) {
 }
 
 export function normalizeExtractionRecord(raw) {
+  const paperMetadata = camelizeObject(raw.paper_metadata || raw.paperMetadata || raw.paper || {});
   return {
     recordId: raw.record_id || raw.recordId,
     runId: raw.run_id || raw.runId,
     paperId: raw.paper_id || raw.paperId,
+    paperMetadata,
+    paper: paperMetadata,
     recordType: raw.record_type || raw.recordType || "",
     recordIndex: raw.record_index ?? raw.recordIndex ?? 0,
     recordIdentity: camelizeObject(raw.record_identity || raw.recordIdentity || {}),
@@ -669,11 +705,13 @@ function normalizeReviewRunList(raw) {
 }
 
 export function normalizeReviewRow(raw) {
+  const paperMetadata = camelizeObject(raw.paper_metadata || raw.paperMetadata || raw.paper || {});
   return {
     recordId: raw.record_id || raw.recordId,
     runId: raw.run_id || raw.runId,
     paperId: raw.paper_id || raw.paperId,
-    paper: camelizeObject(raw.paper || {}),
+    paperMetadata,
+    paper: paperMetadata,
     recordType: raw.record_type || raw.recordType || "",
     recordIndex: raw.record_index ?? raw.recordIndex ?? 0,
     recordIdentity: camelizeObject(raw.record_identity || raw.recordIdentity || {}),
@@ -1066,7 +1104,27 @@ export const structuredExtractionApi = {
     structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/assist`, {
       method: "POST",
       body: JSON.stringify(snakeizeObject(payload || {})),
-    }).then(camelizeObject),
+    }).then((body) => ({ ...camelizeObject(body), result: normalizeSchemaCompilation(body.result || {}) })),
+  startSchemaCompilation: (taskId, payload) =>
+    structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/compilations`, {
+      method: "POST",
+      body: JSON.stringify(snakeizeObject(payload || {})),
+    }).then(normalizeSchemaCompilation),
+  listSchemaCompilations: (taskId, limit = 20) =>
+    structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/compilations?limit=${encodeURIComponent(limit)}`)
+      .then((body) => ({ taskId: body.task_id || body.taskId, compilations: (body.compilations || []).map(normalizeSchemaCompilation) })),
+  getSchemaCompilation: (taskId, compilationId) =>
+    structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/compilations/${encodeURIComponent(compilationId)}`).then(normalizeSchemaCompilation),
+  resolveSchemaCompilation: (taskId, compilationId, payload) =>
+    structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/compilations/${encodeURIComponent(compilationId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(snakeizeObject(payload || {})),
+    }).then(normalizeSchemaCompilation),
+  applySchemaCompilation: (taskId, compilationId, mode = "replace") =>
+    structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/compilations/${encodeURIComponent(compilationId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    }).then(normalizeExtractionSchema),
   freezeSchema: (taskId) =>
     structuredExtractionRequest(`/tasks/${encodeURIComponent(taskId)}/schema/freeze`, { method: "POST" }).then(normalizeExtractionSchema),
   listSchemaVersions: (taskId) =>
@@ -1248,6 +1306,44 @@ export const structuredExtractionApi = {
     return res;
   },
 };
+
+export async function streamSchemaCompilation(taskId, compilationId, onEvent, { after = 0, signal } = {}) {
+  const suffix = after > 0 ? `?after=${encodeURIComponent(after)}` : "";
+  const res = await fetch(
+    `${STRUCTURED_EXTRACTION_BASE}/tasks/${encodeURIComponent(taskId)}/schema/compilations/${encodeURIComponent(compilationId)}/stream${suffix}`,
+    {
+      credentials: "include",
+      headers: apiHeaders({ Accept: "text/event-stream" }),
+      signal,
+    },
+  );
+  if (!res.ok || !res.body) throw new Error(await responseErrorMessage(res, "字段解析进度连接失败"));
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const line = chunk.trim();
+      if (!line.startsWith("data:")) continue;
+      const payload = JSON.parse(line.slice(5).trim());
+      onEvent(payload.type === "snapshot"
+        ? { ...camelizeObject(payload), compilation: normalizeSchemaCompilation(payload.compilation || {}) }
+        : camelizeObject(payload));
+    }
+  }
+  const trailing = buffer.trim();
+  if (trailing.startsWith("data:")) {
+    const payload = JSON.parse(trailing.slice(5).trim());
+    onEvent(payload.type === "snapshot"
+      ? { ...camelizeObject(payload), compilation: normalizeSchemaCompilation(payload.compilation || {}) }
+      : camelizeObject(payload));
+  }
+}
 
 export async function streamWorkflow(workflowId, onEvent, { after = 0 } = {}) {
   const suffix = after > 0 ? `?after=${encodeURIComponent(after)}` : "";

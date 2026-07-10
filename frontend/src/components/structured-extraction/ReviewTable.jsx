@@ -247,7 +247,7 @@ export default function ReviewTable({ task }) {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-[13px] font-medium text-ink-900">{materialName(row)}</div>
-                      <div className="mt-1 line-clamp-2 text-[11.5px] text-ink-500">{row.paper?.title || row.paperId}</div>
+                      <div className="mt-1 line-clamp-2 text-[11.5px] text-ink-500">{row.paperMetadata?.title || row.paper?.title || row.paperId}</div>
                     </div>
                     <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] ${riskClass(row.riskLevel)}`}>{riskText(row.riskLevel)}</span>
                   </div>
@@ -303,7 +303,7 @@ function MaterialDetail({ row, events, saving, onAcceptSuggestion, onRejectSugge
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[15px] font-medium text-ink-900">{materialName(row)}</div>
-          <div className="mt-1 max-w-2xl truncate text-[12px] text-ink-500">{row.paper?.title || row.paperId}</div>
+          <div className="mt-1 max-w-2xl truncate text-[12px] text-ink-500">{row.paperMetadata?.title || row.paper?.title || row.paperId}</div>
         </div>
         <span className={`rounded-md border px-2 py-1 text-[12px] ${riskClass(row.riskLevel || row.reviewPriority)}`}>{riskText(row.riskLevel || row.reviewPriority)}</span>
       </div>

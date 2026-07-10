@@ -2,6 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 python-multipart==0.0.9
+markdown-it-py>=2.2,<4
 # >=1.55.3 required for httpx>=0.28 compatibility (older versions pass the
 # removed `proxies` kwarg and crash on client construction).
 openai>=1.55.3

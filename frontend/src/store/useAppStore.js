@@ -1,9 +1,29 @@
 import { create } from "zustand";
-import { accountApi, adminApi, authApi, corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
+import { accountApi, adminApi, authApi, corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, streamSchemaCompilation, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
+import { emptySchemaWorkbench, readSchemaWorkbenchSession, updateSchemaWorkbenchMap, writeSchemaWorkbenchSession } from "../components/structured-extraction/schemaWorkbenchState.js";
 
 // Block 7/10: human-readable status text for the workflow run log.
 const STEP_STATUS_TEXT = { running: "执行中", done: "完成", failed: "失败", blocked: "已阻塞", pending: "待执行", skipped: "已跳过", unavailable: "敬请期待" };
 const ACTIVE_EVIDENCE_BUILD_STATUSES = new Set(["queued", "running", "cancelling"]);
+const ACTIVE_SCHEMA_COMPILATION_STATUSES = new Set(["queued", "running"]);
+const schemaCompilationStreams = new Map();
+const schemaCompilationPolls = new Map();
+
+function schemaWorkbenchPatch(compilation) {
+  const active = ACTIVE_SCHEMA_COMPILATION_STATUSES.has(compilation?.executionStatus);
+  const error = compilation?.error?.message || null;
+  return {
+    compilationId: compilation?.compilationId || null,
+    executionStatus: compilation?.executionStatus || null,
+    phase: compilation?.phase || null,
+    progress: Number(compilation?.progress ?? 0),
+    indeterminate: ["semantic_compile", "targeted_repair"].includes(compilation?.phase),
+    startedAt: compilation?.startedAt || null,
+    updatedAt: compilation?.updatedAt || null,
+    streamState: active ? "connecting" : "idle",
+    error,
+  };
+}
 
 const EMPTY_WORKFLOW_LIVE = {
   steps: {},
@@ -149,6 +169,7 @@ const EMPTY_EXTRACTION_SCHEMA = {
   versions: [],
   activeVersion: null,
   assistResult: null,
+  compilations: [],
   loading: false,
   saving: false,
   assisting: false,
@@ -477,6 +498,7 @@ export const useAppStore = create((set, get) => ({
     activeTask: null,
     collection: emptyExtractionCollection(),
     schema: emptyExtractionSchema(),
+    schemaWorkbenchByTask: readSchemaWorkbenchSession(),
     preparation: emptyExtractionPreparation(),
     runs: emptyExtractionRuns(),
     review: emptyExtractionReview(),
@@ -919,16 +941,202 @@ export const useAppStore = create((set, get) => ({
     }
   },
 
+  updateExtractionSchemaWorkbench(taskId, patch) {
+    if (!taskId) return null;
+    const current = get().structuredExtraction.schemaWorkbenchByTask || {};
+    const next = updateSchemaWorkbenchMap(current, taskId, patch);
+    writeSchemaWorkbenchSession(next);
+    set((state) => ({
+      structuredExtraction: { ...state.structuredExtraction, schemaWorkbenchByTask: next },
+    }));
+    return next[taskId];
+  },
+
+  clearExtractionSchemaWorkbench(taskId) {
+    if (!taskId) return;
+    const next = { ...(get().structuredExtraction.schemaWorkbenchByTask || {}) };
+    delete next[taskId];
+    writeSchemaWorkbenchSession(next);
+    set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schemaWorkbenchByTask: next } }));
+  },
+
+  applyExtractionSchemaCompilationSnapshot(taskId, compilation) {
+    if (!taskId || !compilation?.compilationId) return null;
+    const current = get().structuredExtraction.schemaWorkbenchByTask?.[taskId] || emptySchemaWorkbench();
+    const active = ACTIVE_SCHEMA_COMPILATION_STATUSES.has(compilation.executionStatus);
+    const terminal = ["completed", "failed"].includes(compilation.executionStatus);
+    const canPreview = terminal
+      && compilation.executionStatus === "completed"
+      && compilation.compilationId !== current.dismissedCompilationId
+      && (compilation.fieldTree || []).length > 0;
+    let syncMessage = current.syncMessage;
+    if (terminal && compilation.executionStatus === "failed") syncMessage = compilation.error?.message || "字段解析失败，可保留输入后重新解析。";
+    else if (terminal && compilation.status === "needs_review") syncMessage = "仍有未解决的要求，请逐条处理后再应用。";
+    else if (terminal && canPreview) syncMessage = "编译完成，请检查覆盖率、系统字段和全局规则。";
+    const patch = {
+      ...schemaWorkbenchPatch(compilation),
+      definitionText: current.definitionText || compilation.sourceText || "",
+      previewTree: canPreview ? compilation.fieldTree : (active ? current.previewTree : current.previewTree),
+      syncMessage,
+      streamState: active ? current.streamState : "idle",
+    };
+    get().updateExtractionSchemaWorkbench(taskId, patch);
+    set((state) => ({
+      structuredExtraction: {
+        ...state.structuredExtraction,
+        schema: {
+          ...state.structuredExtraction.schema,
+          assistResult: { status: compilation.status, available: compilation.status !== "llm_unavailable", result: compilation },
+          assisting: active,
+          error: compilation.executionStatus === "failed" ? (compilation.error?.message || "字段解析失败") : null,
+        },
+      },
+    }));
+    return compilation;
+  },
+
+  async resumeExtractionSchemaCompilation(taskId) {
+    const id = taskId || get().structuredExtraction.activeTaskId;
+    if (!id) return null;
+    try {
+      const result = await structuredExtractionApi.listSchemaCompilations(id, 20);
+      set((state) => ({
+        structuredExtraction: {
+          ...state.structuredExtraction,
+          schema: { ...state.structuredExtraction.schema, compilations: result.compilations },
+        },
+      }));
+      const workbench = get().structuredExtraction.schemaWorkbenchByTask?.[id] || emptySchemaWorkbench();
+      const active = result.compilations.find((item) => ACTIVE_SCHEMA_COMPILATION_STATUSES.has(item.executionStatus));
+      const remembered = result.compilations.find((item) => item.compilationId === workbench.compilationId);
+      const compilation = active || remembered || null;
+      if (!compilation) return null;
+      get().applyExtractionSchemaCompilationSnapshot(id, compilation);
+      if (ACTIVE_SCHEMA_COMPILATION_STATUSES.has(compilation.executionStatus)) {
+        get().followExtractionSchemaCompilation(id, compilation.compilationId);
+      }
+      return compilation;
+    } catch (e) {
+      get().updateExtractionSchemaWorkbench(id, { streamState: "error", error: e.message });
+      return null;
+    }
+  },
+
+  followExtractionSchemaCompilation(taskId, compilationId, attempt = 0) {
+    const key = `${taskId}:${compilationId}`;
+    if (schemaCompilationStreams.has(key)) return schemaCompilationStreams.get(key);
+    let promise;
+    promise = (async () => {
+      get().updateExtractionSchemaWorkbench(taskId, { streamState: attempt > 0 ? "reconnecting" : "connecting" });
+      try {
+        await streamSchemaCompilation(taskId, compilationId, (event) => {
+          if (event.type === "snapshot") {
+            get().applyExtractionSchemaCompilationSnapshot(taskId, event.compilation);
+            get().updateExtractionSchemaWorkbench(taskId, { streamState: "connected" });
+          } else if (event.type === "schema_compilation_progress") {
+            get().updateExtractionSchemaWorkbench(taskId, {
+              executionStatus: "running",
+              phase: event.phase,
+              progress: Number(event.progress ?? 0),
+              indeterminate: !!event.indeterminate,
+              streamState: "connected",
+              error: null,
+            });
+          } else if (event.type === "done") {
+            structuredExtractionApi.getSchemaCompilation(taskId, compilationId)
+              .then((compilation) => get().applyExtractionSchemaCompilationSnapshot(taskId, compilation))
+              .catch(() => {});
+          }
+        });
+      } catch (e) {
+        if (attempt < 2) {
+          get().updateExtractionSchemaWorkbench(taskId, { streamState: "reconnecting", error: null });
+          setTimeout(() => get().followExtractionSchemaCompilation(taskId, compilationId, attempt + 1), 500 * (attempt + 1));
+        } else {
+          get().updateExtractionSchemaWorkbench(taskId, { streamState: "polling", error: null });
+          get().pollExtractionSchemaCompilation(taskId, compilationId);
+        }
+      } finally {
+        if (schemaCompilationStreams.get(key) === promise) schemaCompilationStreams.delete(key);
+      }
+    })();
+    schemaCompilationStreams.set(key, promise);
+    return promise;
+  },
+
+  pollExtractionSchemaCompilation(taskId, compilationId) {
+    const key = `${taskId}:${compilationId}`;
+    if (schemaCompilationPolls.has(key)) return;
+    const poll = async () => {
+      try {
+        const compilation = await structuredExtractionApi.getSchemaCompilation(taskId, compilationId);
+        get().applyExtractionSchemaCompilationSnapshot(taskId, compilation);
+        if (ACTIVE_SCHEMA_COMPILATION_STATUSES.has(compilation.executionStatus)) {
+          get().updateExtractionSchemaWorkbench(taskId, { streamState: "polling" });
+          schemaCompilationPolls.set(key, setTimeout(poll, 2000));
+        } else {
+          schemaCompilationPolls.delete(key);
+        }
+      } catch (e) {
+        get().updateExtractionSchemaWorkbench(taskId, { streamState: "polling", error: null });
+        schemaCompilationPolls.set(key, setTimeout(poll, 3000));
+      }
+    };
+    schemaCompilationPolls.set(key, setTimeout(poll, 0));
+  },
+
   async assistExtractionSchema(taskId, payload) {
     const id = taskId || get().structuredExtraction.activeTaskId;
     if (!id) return null;
+    get().updateExtractionSchemaWorkbench(id, {
+      previewTree: null,
+      syncMessage: "",
+      executionStatus: "queued",
+      phase: "submitting",
+      progress: 0,
+      indeterminate: false,
+      streamState: "connecting",
+      error: null,
+    });
     set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assisting: true, error: null } } }));
     try {
-      const assistResult = await structuredExtractionApi.assistSchema(id, payload);
-      set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assistResult, assisting: false } } }));
-      return assistResult;
+      const compilation = await structuredExtractionApi.startSchemaCompilation(id, payload);
+      get().applyExtractionSchemaCompilationSnapshot(id, compilation);
+      get().followExtractionSchemaCompilation(id, compilation.compilationId);
+      return compilation;
     } catch (e) {
       set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assisting: false, error: e.message } } }));
+      get().updateExtractionSchemaWorkbench(id, { executionStatus: "failed", phase: "submission_failed", streamState: "error", error: e.message });
+      throw e;
+    }
+  },
+
+  async resolveExtractionSchemaCompilation(taskId, compilationId, resolutions) {
+    const id = taskId || get().structuredExtraction.activeTaskId;
+    if (!id || !compilationId) return null;
+    set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assisting: true, error: null } } }));
+    try {
+      const result = await structuredExtractionApi.resolveSchemaCompilation(id, compilationId, { resolutions });
+      get().applyExtractionSchemaCompilationSnapshot(id, result);
+      set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assisting: false } } }));
+      return result;
+    } catch (e) {
+      set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, assisting: false, error: e.message } } }));
+      throw e;
+    }
+  },
+
+  async applyExtractionSchemaCompilation(taskId, compilationId, mode = "replace") {
+    const id = taskId || get().structuredExtraction.activeTaskId;
+    if (!id || !compilationId) return null;
+    set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, saving: true, error: null } } }));
+    try {
+      const draft = await structuredExtractionApi.applySchemaCompilation(id, compilationId, mode);
+      set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, draft, saving: false } } }));
+      get().updateExtractionSchemaWorkbench(id, { previewTree: null, syncMessage: "已同步，下面可以继续手动调整。" });
+      return draft;
+    } catch (e) {
+      set((state) => ({ structuredExtraction: { ...state.structuredExtraction, schema: { ...state.structuredExtraction.schema, saving: false, error: e.message } } }));
       throw e;
     }
   },

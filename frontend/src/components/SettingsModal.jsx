@@ -133,6 +133,7 @@ const REASON_LABELS = {
   missing_chat_model: "缺少对话模型",
   missing_base_url: "缺少基础地址",
   missing_api_key: "缺少 API 密钥",
+  credential_unreadable: "API 密钥无法解密，请重新保存密钥",
   ollama_model_unavailable: "Ollama 中未找到该模型",
   research_agent_unavailable: "研究智能体不可用",
 };
@@ -884,6 +885,8 @@ function ProfileRow({ profile, editing, onEdit, onClose }) {
               </button>
               <button title="复制完整密钥" className="text-ink-400 hover:text-ink-700" onClick={copy}><Copy size={13} /></button>
             </div>
+          ) : profile.key_status === "unreadable" ? (
+            <span className="text-[12px] text-red-600">密钥无法解密，点编辑重新保存</span>
           ) : (
             <span className="text-[12px] text-amber-700">未保存密钥，点编辑补充</span>
           )}

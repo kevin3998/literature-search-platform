@@ -40,6 +40,30 @@ class LLMClient(ABC):
     ) -> AsyncIterator[dict[str, Any]]:
         raise NotImplementedError
 
+    async def generate_structured(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any],
+        name: str = "submit_structured_result",
+    ) -> dict[str, Any]:
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "Submit the validated structured result.",
+                "parameters": schema,
+            },
+        }]
+        content: list[str] = []
+        async for event in self.stream_chat(messages, tools=tools):
+            if event.get("type") == "tool_call" and event.get("name") == name:
+                arguments = event.get("arguments")
+                if isinstance(arguments, dict):
+                    return arguments
+            if event.get("type") == "content" and event.get("text"):
+                content.append(str(event["text"]))
+        return _structured_json("".join(content))
+
 
 class OpenAIClient(LLMClient):
     def __init__(
@@ -143,6 +167,24 @@ def _safe_json(raw: str | None) -> dict[str, Any]:
         return value if isinstance(value, dict) else {"value": value}
     except (json.JSONDecodeError, TypeError):
         return {}
+
+
+def _structured_json(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("empty structured LLM output")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        import re
+
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            raise ValueError("structured LLM output is not JSON")
+        value = json.loads(match.group(0))
+    if not isinstance(value, dict):
+        raise ValueError("structured LLM output must be an object")
+    return value
 
 
 def build_llm_client(settings_store, *, strong: bool = False, user_id: str | None = None) -> LLMClient:

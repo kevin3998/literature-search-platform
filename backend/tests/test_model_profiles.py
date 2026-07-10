@@ -87,6 +87,36 @@ def test_active_profile_key_source_requires_readable_secret(tmp_path, monkeypatc
     assert settings.api_key_source("deepseek") is None
 
 
+def test_profile_distinguishes_unreadable_secret_from_missing_secret():
+    class UnreadableSecrets:
+        def status(self, _secret_type, *, user_id=None):
+            return "unreadable"
+
+        def preview(self, _secret_type, *, user_id=None):
+            return "sk-mask...test"
+
+    store = object.__new__(ModelProfileStore)
+    store.secrets = UnreadableSecrets()
+    row = {
+        "profile_id": "00000000-0000-4000-8000-000000000001",
+        "secret_id": "00000000-0000-4000-8000-000000000002",
+        "name": "DeepSeek",
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "config_json": {},
+        "active": True,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+    profile = store._row(row, user_id="00000000-0000-4000-8000-000000000003")
+
+    assert profile["has_key"] is False
+    assert profile["key_status"] == "unreadable"
+    assert profile["key_masked"] == "sk-mask...test"
+
+
 def test_update_keeps_key_when_blank_and_delete_removes_secret(tmp_path):
     store = _store(tmp_path)
     profile = store.create(name="a", provider="openai", model="gpt-4o", api_key="sk-original")

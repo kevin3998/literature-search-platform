@@ -385,6 +385,7 @@ class StructuredExtractionReviewService:
             by_record.setdefault(state["record_id"], []).append(state)
         rows: list[dict[str, Any]] = []
         for record in records:
+            paper_metadata = paper_map.get(record["paper_id"], {"paper_id": record["paper_id"]})
             fields: dict[str, Any] = {}
             field_priorities: list[str] = []
             statuses: list[str] = []
@@ -413,7 +414,8 @@ class StructuredExtractionReviewService:
                     "record_id": record["record_id"],
                     "run_id": run_id,
                     "paper_id": record["paper_id"],
-                    "paper": paper_map.get(record["paper_id"], {"paper_id": record["paper_id"]}),
+                    "paper_metadata": paper_metadata,
+                    "paper": paper_metadata,
                     "record_type": record.get("record_type"),
                     "record_index": record.get("record_index"),
                     "record_identity": record.get("record_identity") or {},

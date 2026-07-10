@@ -8,11 +8,13 @@ from .multimodal_review import StructuredExtractionMultimodalReviewService
 from .prompt_contract import StructuredExtractionPromptContractService
 from .review import StructuredExtractionReviewService
 from .schema_designer import StructuredExtractionSchemaDesigner
+from .schema_compilation_store import StructuredExtractionSchemaCompilationStore
 from .store import StructuredExtractionStore
 
 structured_extraction_store = StructuredExtractionStore()
 structured_extraction_collection_service = StructuredExtractionCollectionService(structured_extraction_store)
 structured_extraction_schema_designer = StructuredExtractionSchemaDesigner(structured_extraction_store)
+structured_extraction_schema_compilation_store = StructuredExtractionSchemaCompilationStore(structured_extraction_store)
 structured_extraction_prompt_contract_service = StructuredExtractionPromptContractService(structured_extraction_store)
 structured_extraction_evidence_packet_service = StructuredExtractionEvidencePacketService(
     structured_extraction_store,
@@ -34,6 +36,7 @@ __all__ = [
     "structured_extraction_store",
     "structured_extraction_collection_service",
     "structured_extraction_schema_designer",
+    "structured_extraction_schema_compilation_store",
     "structured_extraction_prompt_contract_service",
     "structured_extraction_evidence_packet_service",
     "structured_extraction_run_service",
