@@ -63,6 +63,7 @@ function CoverageCard({ Icon, label, value, sub, accent = "text-ink-500" }) {
 
 export default function HomeDashboard() {
   const home = useAppStore((s) => s.home);
+  const currentUser = useAppStore((s) => s.currentUser);
   const loadHomeDashboard = useAppStore((s) => s.loadHomeDashboard);
   const runMaintenance = useAppStore((s) => s.runMaintenance);
 
@@ -107,6 +108,11 @@ export default function HomeDashboard() {
   const warnings = dashboard.warnings || [];
   const recentJobs = dashboard.recent_jobs || [];
   const runningMaintenance = dashboard.running_maintenance;
+  const isAdmin = currentUser?.role === "admin";
+
+  if (!isAdmin) {
+    return <UserCorpusSummary dashboard={dashboard} status={status} loading={loading} onRefresh={loadHomeDashboard} />;
+  }
 
   return (
     <div className="flex-1 overflow-y-auto bg-paper-50">
@@ -199,79 +205,142 @@ export default function HomeDashboard() {
           </div>
         </div>
 
-        {/* Maintenance */}
-        <div className="rounded-lg border border-line bg-paper-0 p-4 mt-5">
-          <div className="flex items-center justify-between">
-            <div className="text-[12px] font-medium text-ink-700 flex items-center gap-1.5">
-              <RefreshCw size={14} className="text-ink-400" /> 索引维护
-              <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] font-mono bg-paper-100 text-ink-400">
-                {caps.can_maintain ? `admin` : `viewer · 只读`}
-              </span>
+        <AdminCorpusOperations
+          caps={caps}
+          maintenance={maintenance}
+          recentJobs={recentJobs}
+          runningMaintenance={runningMaintenance}
+          onRunMaintenance={runMaintenance}
+        />
+      </div>
+    </div>
+  );
+}
+
+function UserCorpusSummary({ dashboard, status, loading, onRefresh }) {
+  const cov = dashboard.coverage || {};
+  const summary = dashboard.summary || {};
+  const vector = dashboard.vector || {};
+  const failures = dashboard.failures || [];
+  const StatusIcon = status.Icon;
+  const unavailable = dashboard.overall_status === "failed" || failures.length > 0;
+  return (
+    <div className="flex-1 overflow-y-auto bg-paper-50">
+      <div className="mx-auto max-w-[920px] px-8 py-7">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-400">
+              <Database size={13} /> Corpus
+            </div>
+            <h1 className="mt-1.5 font-serif text-[24px] text-ink-900">正式文献库</h1>
+            <div className="mt-1 text-[12.5px] text-ink-500">
+              {unavailable ? "文献库暂不可用，请联系管理员处理。" : "文献库已连接，可以开始检索和研究任务。"}
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <span className={clsx("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium", status.cls)}>
+              <StatusIcon size={14} /> {unavailable ? "不可用" : "可检索"}
+            </span>
+            <button
+              onClick={() => onRefresh()}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-ink-500 hover:bg-paper-100 hover:text-ink-900"
+              title="刷新"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            </button>
+          </div>
+        </div>
 
-          {caps.can_maintain ? (
-            <div className="flex flex-wrap gap-2 mt-3">
-              {["health_check", "index_refresh", "vector_build"].map((action) => {
-                const running = maintenance.runningAction === action || runningMaintenance?.job_type === action;
-                const busy = !!maintenance.runningAction || !!runningMaintenance;
-                return (
-                  <button
-                    key={action}
-                    disabled={busy}
-                    onClick={() => runMaintenance(action)}
-                    className={clsx(
-                      "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] transition-colors",
-                      running ? "border-amber text-amber" : "border-line text-ink-700 hover:bg-paper-100",
-                      busy && !running && "opacity-40 cursor-not-allowed"
-                    )}
-                  >
-                    {running && <RefreshCw size={12} className="animate-spin" />}
-                    {ACTION_LABELS[action]}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-[12px] text-ink-400 mt-2">当前为只读角色，无法触发索引维护。可设置环境变量 LITERATURE_PLATFORM_ROLE=admin 启用。</div>
-          )}
+        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <CoverageCard Icon={FileText} label="文献 Papers" value={fmt(summary.papers || cov.papers)} accent="text-teal" />
+          <CoverageCard Icon={Activity} label="文档 Documents" value={fmt(summary.documents)} />
+          <CoverageCard Icon={Layers} label="章节 Sections" value={fmt(summary.sections || cov.sections)} />
+          <CoverageCard Icon={Boxes} label="文本块 Chunks" value={fmt(summary.chunks || cov.chunks)} />
+        </div>
 
-          <MaintenanceProgress maintenance={maintenance} runningMaintenance={runningMaintenance} />
-
-          {maintenance.error && <div className="text-[12px] text-red-500 mt-2">{maintenance.error}</div>}
-          {maintenance.events.length > 0 && (
-            <div className="mt-3 rounded-md bg-ink-900 text-paper-50/90 font-mono text-[11px] p-2.5 max-h-32 overflow-y-auto">
-              {maintenance.events.map((e, i) => (
-                <div key={i} className="truncate">
-                  · {e.type === "stage" ? `${e.label || e.stage} [${e.status}]` : e.type === "error" ? `错误: ${e.message}` : e.type}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Recent maintenance jobs */}
-          {recentJobs.length > 0 && (
-            <div className="mt-4">
-              <div className="text-[11px] font-mono uppercase tracking-wide text-ink-400 mb-1.5">最近维护任务</div>
-              <div className="space-y-1">
-                {recentJobs.slice(0, 6).map((job) => {
-                  const dur = jobDurationSeconds(job);
-                  return (
-                    <div key={job.job_id} className="flex items-center gap-2 text-[12px] text-ink-600">
-                      <JobStatusDot status={job.status} />
-                      <span className="font-mono text-ink-400">{ACTION_LABELS[job.job_type] || job.job_type}</span>
-                      <span className="text-ink-300">·</span>
-                      <span>{job.status}</span>
-                      {dur != null && <span className="text-ink-400">· 用时 {fmtDuration(dur)}</span>}
-                      {job.error && <span className="text-red-500 truncate">· {job.error}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+        <div className="mt-5 rounded-lg border border-line bg-paper-0 p-4">
+          <div className="flex items-center gap-2 text-[12px] font-medium text-ink-700">
+            <ShieldCheck size={14} className={vector.built ? "text-teal" : "text-amber"} />
+            检索能力
+          </div>
+          <div className="mt-2 text-[12.5px] text-ink-600">
+            {vector.built ? "关键词检索与向量检索均可用。" : "当前使用关键词与结构化检索；向量检索暂未启用。"}
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AdminCorpusOperations({ caps, maintenance, recentJobs, runningMaintenance, onRunMaintenance }) {
+  return (
+    <div className="mt-5 rounded-lg border border-line bg-paper-0 p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-[12px] font-medium text-ink-700">
+          <RefreshCw size={14} className="text-ink-400" /> 索引维护
+          <span className="ml-1 rounded bg-paper-100 px-1.5 py-0.5 font-mono text-[10px] text-ink-400">
+            {caps.can_maintain ? "admin" : "read-only"}
+          </span>
+        </div>
+      </div>
+
+      {caps.can_maintain && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {["health_check", "index_refresh", "vector_build"].map((action) => {
+            const running = maintenance.runningAction === action || runningMaintenance?.job_type === action;
+            const busy = !!maintenance.runningAction || !!runningMaintenance;
+            return (
+              <button
+                key={action}
+                disabled={busy}
+                onClick={() => onRunMaintenance(action)}
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[12px] transition-colors",
+                  running ? "border-amber text-amber" : "border-line text-ink-700 hover:bg-paper-100",
+                  busy && !running && "cursor-not-allowed opacity-40"
+                )}
+              >
+                {running && <RefreshCw size={12} className="animate-spin" />}
+                {ACTION_LABELS[action]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <MaintenanceProgress maintenance={maintenance} runningMaintenance={runningMaintenance} />
+
+      {maintenance.error && <div className="mt-2 text-[12px] text-red-500">{maintenance.error}</div>}
+      {maintenance.events.length > 0 && (
+        <div className="mt-3 max-h-32 overflow-y-auto rounded-md bg-ink-900 p-2.5 font-mono text-[11px] text-paper-50/90">
+          {maintenance.events.map((e, i) => (
+            <div key={i} className="truncate">
+              · {e.type === "stage" ? `${e.label || e.stage} [${e.status}]` : e.type === "error" ? `错误: ${e.message}` : e.type}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {recentJobs.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wide text-ink-400">最近维护任务</div>
+          <div className="space-y-1">
+            {recentJobs.slice(0, 6).map((job) => {
+              const dur = jobDurationSeconds(job);
+              return (
+                <div key={job.job_id} className="flex items-center gap-2 text-[12px] text-ink-600">
+                  <JobStatusDot status={job.status} />
+                  <span className="font-mono text-ink-400">{ACTION_LABELS[job.job_type] || job.job_type}</span>
+                  <span className="text-ink-300">·</span>
+                  <span>{job.status}</span>
+                  {dur != null && <span className="text-ink-400">· 用时 {fmtDuration(dur)}</span>}
+                  {job.error && <span className="truncate text-red-500">· {job.error}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

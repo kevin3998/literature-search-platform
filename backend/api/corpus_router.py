@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from core.settings_store import settings_store
+from core.permissions import require_admin
+from core.user_context import UserContext, current_user
 from modules.literature_search.corpus import (
     MAINTENANCE_ACTIONS,
     CorpusService,
@@ -63,19 +64,19 @@ def _handle_error(exc: Exception):
 
 
 @router.get("/dashboard")
-def dashboard():
+def dashboard(user: UserContext = Depends(current_user)):
     try:
-        role = settings_store.platform_role()
-        recent_jobs = job_store.list_jobs(job_types=_MAINTENANCE_JOB_TYPES, limit=10)
+        role = "admin" if user.role == "admin" and user.status == "active" else "viewer"
+        recent_jobs = job_store.list_jobs(job_types=_MAINTENANCE_JOB_TYPES, limit=10) if role == "admin" else []
         payload = corpus().dashboard(role=role, recent_jobs=recent_jobs)
         # Attach the latest streamed progress so a reloaded page (with no live
         # SSE stream) can still render a determinate bar for a running refresh.
         running = payload.get("running_maintenance")
-        if running and running.get("job_id"):
+        if role == "admin" and running and running.get("job_id"):
             progress = job_store.latest_event(running["job_id"], "progress")
             if progress:
                 running["progress"] = progress
-        return payload
+        return payload if role == "admin" else _viewer_dashboard(payload)
     except Exception as exc:  # noqa: BLE001
         _handle_error(exc)
 
@@ -109,7 +110,8 @@ def paper_paths(payload: PaperPathsRequest):
 
 
 @router.get("/maintenance/jobs")
-def maintenance_jobs(limit: int = 20):
+def maintenance_jobs(limit: int = 20, user: UserContext = Depends(require_admin)):
+    del user
     try:
         return job_store.list_jobs(job_types=_MAINTENANCE_JOB_TYPES, limit=limit)
     except Exception as exc:  # noqa: BLE001
@@ -117,12 +119,9 @@ def maintenance_jobs(limit: int = 20):
 
 
 @router.post("/maintenance/{action}")
-def run_maintenance(action: str):
+def run_maintenance(action: str, user: UserContext = Depends(require_admin)):
     if action not in MAINTENANCE_ACTIONS:
         raise HTTPException(status_code=404, detail=f"unknown maintenance action: {action}")
-    role = settings_store.platform_role()
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="maintenance requires the admin role")
     running = [
         job for job in job_store.list_jobs(job_types=_MAINTENANCE_JOB_TYPES, limit=20)
         if job.get("status") in {"queued", "running"}
@@ -133,10 +132,47 @@ def run_maintenance(action: str):
             status_code=409,
             detail=f"maintenance job already running: {current.get('job_type')} ({current.get('job_id')})",
         )
-    job = job_runner.submit(action, {"triggered_by": role})
+    job = job_runner.submit(action, {"triggered_by": "admin", "user_id": user.user_id})
     return {
         "job_id": job["job_id"],
         "status": job["status"],
         "action": action,
         "stream_url": f"/api/literature-search/jobs/{job['job_id']}/stream",
     }
+
+
+def _viewer_dashboard(payload: dict) -> dict:
+    coverage = payload.get("coverage") or {}
+    summary = payload.get("summary") or {}
+    vector = payload.get("vector") or {}
+    capabilities = payload.get("capabilities") or {}
+    return {
+        "index_available": bool(payload.get("index_available")),
+        "overall_status": _viewer_status(payload),
+        "role": "viewer",
+        "capabilities": {
+            **capabilities,
+            "role": "viewer",
+            "can_view": True,
+            "can_maintain": False,
+            "maintenance_actions": [],
+        },
+        "coverage": coverage,
+        "summary": {
+            "papers": summary.get("papers") or coverage.get("papers"),
+            "documents": summary.get("documents"),
+            "sections": summary.get("sections") or coverage.get("sections"),
+            "chunks": summary.get("chunks") or coverage.get("chunks"),
+        },
+        "vector": {"built": bool(vector.get("built"))},
+        "warnings": [],
+        "failures": list(payload.get("failures") or []),
+    }
+
+
+def _viewer_status(payload: dict) -> str:
+    if payload.get("overall_status") == "failed":
+        return "failed"
+    if payload.get("running_maintenance"):
+        return "updating"
+    return "healthy" if payload.get("index_available") else "failed"

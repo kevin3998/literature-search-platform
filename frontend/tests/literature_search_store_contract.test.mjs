@@ -137,6 +137,65 @@ test("auth bootstrap loads modules when user is authenticated", async () => {
   assert.equal(useAppStore.getState().activeModuleId, "literature_search");
 });
 
+test("regular user settings load avoids admin diagnostics and readiness endpoints", async () => {
+  installWindowStub();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    if (url === "/api/settings") {
+      return new Response(JSON.stringify({ general: {}, models: {}, retrieval: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/settings/effective") {
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  const { useAppStore } = await import(`../src/store/useAppStore.js?settingsUser=${Date.now()}`);
+  useAppStore.setState({ currentUser: { user_id: "u1", role: "user", status: "active" } });
+  await useAppStore.getState().loadSettings();
+
+  assert.deepEqual(calls, ["/api/settings", "/api/settings/effective"]);
+  assert.equal(useAppStore.getState().settings.diagnostics, null);
+  assert.equal(useAppStore.getState().settings.readiness, null);
+});
+
+test("admin settings load includes diagnostics and readiness endpoints", async () => {
+  installWindowStub();
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    if (url === "/api/settings") {
+      return new Response(JSON.stringify({ general: {}, models: {}, retrieval: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/settings/effective") {
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/settings/diagnostics") {
+      return new Response(JSON.stringify({ checks: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/settings/readiness") {
+      return new Response(JSON.stringify({ ready: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  const { useAppStore } = await import(`../src/store/useAppStore.js?settingsAdmin=${Date.now()}`);
+  useAppStore.setState({ currentUser: { user_id: "admin-1", role: "admin", status: "active" } });
+  await useAppStore.getState().loadSettings();
+
+  assert.ok(calls.includes("/api/settings/diagnostics"));
+  assert.ok(calls.includes("/api/settings/readiness"));
+  assert.deepEqual(useAppStore.getState().settings.diagnostics, { checks: [] });
+  assert.deepEqual(useAppStore.getState().settings.readiness, { ready: true });
+});
+
 test("selectModule opens an auto-created empty literature session without requiring detail hydration", async () => {
   installWindowStub();
   const calls = [];

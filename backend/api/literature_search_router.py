@@ -24,6 +24,7 @@ from modules.literature_search.schemas import (
     VectorBuildRequest,
     VerifyAnswerRequest,
 )
+from core.permissions import require_admin
 from core.session_store import session_store
 from core.settings_store import settings_store
 from core.user_context import UserContext, current_user
@@ -253,7 +254,7 @@ def vector_status():
 
 
 @router.post("/vector/build")
-def vector_build(payload: VectorBuildRequest, user: UserContext = Depends(current_user)):
+def vector_build(payload: VectorBuildRequest, user: UserContext = Depends(require_admin)):
     job = job_runner.submit("vector_build", {**payload.model_dump(), "user_id": user.user_id})
     return _job_response(job)
 

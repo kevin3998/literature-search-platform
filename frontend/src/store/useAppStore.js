@@ -275,6 +275,10 @@ function filenameFromContentDisposition(header, fallback) {
   return match?.[1] || fallback;
 }
 
+function isAdminUser(user) {
+  return user?.role === "admin" && user?.status !== "disabled";
+}
+
 export const useAppStore = create((set, get) => ({
   modules: [],
   modulesLoaded: false,
@@ -3087,11 +3091,12 @@ export const useAppStore = create((set, get) => ({
   async loadSettings() {
     get().updateSettings({ loading: true, error: null });
     try {
+      const admin = isAdminUser(get().currentUser);
       const [values, effective, diagnostics, readiness] = await Promise.all([
         settingsApi.get(),
         settingsApi.effective(),
-        settingsApi.diagnostics(),
-        settingsApi.readiness(),
+        admin ? settingsApi.diagnostics() : Promise.resolve(null),
+        admin ? settingsApi.readiness() : Promise.resolve(null),
       ]);
       get().updateSettings({
         values,
@@ -3167,10 +3172,11 @@ export const useAppStore = create((set, get) => ({
     get().updateSettings({ saving: true, error: null });
     try {
       const values = await mutate();
+      const admin = isAdminUser(get().currentUser);
       const [effective, diagnostics, readiness] = await Promise.all([
         settingsApi.effective(),
-        settingsApi.diagnostics(),
-        settingsApi.readiness(),
+        admin ? settingsApi.diagnostics() : Promise.resolve(null),
+        admin ? settingsApi.readiness() : Promise.resolve(null),
       ]);
       get().updateSettings({
         values,
@@ -3191,6 +3197,10 @@ export const useAppStore = create((set, get) => ({
   },
 
   async refreshDiagnostics() {
+    if (!isAdminUser(get().currentUser)) {
+      get().updateSettings({ diagnostics: null, loading: false });
+      return null;
+    }
     get().updateSettings({ loading: true, error: null });
     try {
       const diagnostics = await settingsApi.diagnostics();
@@ -3218,10 +3228,11 @@ export const useAppStore = create((set, get) => ({
   // unsaved edits (provider, chat_model, ...) survive a key save/clear.
   async refreshSettingsStatus() {
     try {
+      const admin = isAdminUser(get().currentUser);
       const [values, effective, readiness] = await Promise.all([
         settingsApi.get(),
         settingsApi.effective(),
-        settingsApi.readiness(),
+        admin ? settingsApi.readiness() : Promise.resolve(null),
       ]);
       get().updateSettings({ values, effective, readiness });
     } catch (e) {

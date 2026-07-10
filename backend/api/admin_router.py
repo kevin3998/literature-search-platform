@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 import core.auth_store as auth_store_module
 from core.csrf import require_csrf
-from core.user_context import UserContext, current_user
+from core.permissions import require_admin
+from core.user_context import UserContext
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -18,12 +19,6 @@ class AdminUserPatchRequest(BaseModel):
 
 class AdminResetPasswordRequest(BaseModel):
     new_password: str
-
-
-def require_admin(user: UserContext = Depends(current_user)) -> UserContext:
-    if user.role != "admin" or user.status != "active":
-        raise HTTPException(status_code=403, detail="admin role required")
-    return user
 
 
 @router.get("/users")

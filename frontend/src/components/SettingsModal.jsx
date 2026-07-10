@@ -32,6 +32,7 @@ const CATEGORIES = [
   ["retrieval", "检索", Telescope],
   ["environment", "环境", FolderCog],
 ];
+const USER_SETTING_TABS = new Set(["account", "models", "retrieval"]);
 
 // Editable [scope, key] descriptors per category — drives precise per-field dirty
 // detection and partial Save (so categories that share a backend scope, e.g. 常规
@@ -145,14 +146,22 @@ export default function SettingsModal() {
   const activeTab = useAppStore((s) => s.settings.activeTab);
   const setTab = useAppStore((s) => s.setSettingsTab);
   const closeSettings = useAppStore((s) => s.closeSettings);
+  const currentUser = useAppStore((s) => s.currentUser);
   const loading = useAppStore((s) => s.settings.loading);
   const draft = useAppStore((s) => s.settings.draft);
   const values = useAppStore((s) => s.settings.values);
   const error = useAppStore((s) => s.settings.error);
+  const isAdmin = currentUser?.role === "admin";
+  const visibleCategories = useMemo(
+    () => CATEGORIES.filter(([key]) => isAdmin || USER_SETTING_TABS.has(key)),
+    [isAdmin]
+  );
+  const activeTabAllowed = visibleCategories.some(([key]) => key === activeTab);
+  const visibleActiveTab = activeTabAllowed ? activeTab : visibleCategories[0]?.[0] || "account";
 
   const anyDirty = useMemo(
-    () => Object.values(CATEGORY_FIELDS).some((fields) => fieldsDirty(fields, draft, values)),
-    [draft, values]
+    () => visibleCategories.some(([key]) => fieldsDirty(CATEGORY_FIELDS[key] || [], draft, values)),
+    [draft, values, visibleCategories]
   );
 
   const attemptClose = () => {
@@ -180,7 +189,7 @@ export default function SettingsModal() {
         {/* Left rail: single-level category nav (no search box per Block 1 v1) */}
         <aside className="flex w-[208px] flex-shrink-0 flex-col border-r border-line bg-paper-50">
           <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-            {CATEGORIES.map(([key, label, Icon]) => {
+            {visibleCategories.map(([key, label, Icon]) => {
               const dirty = fieldsDirty(CATEGORY_FIELDS[key] || [], draft, values);
               return (
                 <button
@@ -188,7 +197,7 @@ export default function SettingsModal() {
                   onClick={() => setTab(key)}
                   className={clsx(
                     "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-[12.5px] transition-colors",
-                    activeTab === key ? "bg-ink-900 text-paper-50" : "text-ink-500 hover:bg-paper-100 hover:text-ink-900"
+                    visibleActiveTab === key ? "bg-ink-900 text-paper-50" : "text-ink-500 hover:bg-paper-100 hover:text-ink-900"
                   )}
                 >
                   <Icon size={15} />
@@ -220,13 +229,13 @@ export default function SettingsModal() {
                 {error && (
                   <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">{error}</div>
                 )}
-                {activeTab === "account" && <AccountCategory />}
-                {activeTab === "general" && <GeneralCategory />}
-                {activeTab === "appearance" && <AppearanceCategory />}
-                {activeTab === "models" && <ModelsCategory />}
-                {activeTab === "agent" && <AgentCategory />}
-                {activeTab === "retrieval" && <RetrievalCategory />}
-                {activeTab === "environment" && <EnvironmentCategory />}
+                {visibleActiveTab === "account" && <AccountCategory />}
+                {visibleActiveTab === "general" && <GeneralCategory />}
+                {visibleActiveTab === "appearance" && <AppearanceCategory />}
+                {visibleActiveTab === "models" && <ModelsCategory />}
+                {visibleActiveTab === "agent" && <AgentCategory />}
+                {visibleActiveTab === "retrieval" && <RetrievalCategory />}
+                {visibleActiveTab === "environment" && <EnvironmentCategory />}
               </>
             )}
           </main>
