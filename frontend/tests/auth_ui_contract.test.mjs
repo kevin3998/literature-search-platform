@@ -21,12 +21,20 @@ test("account settings uses real current user and exposes api tokens", async () 
   assert.match(source, /changePassword|修改密码/);
 });
 
-test("admin users modal contains role status and reset actions", async () => {
+test("admin users modal contains filters and complete explicit actions", async () => {
   const source = await readFile(new URL("../src/components/AdminUsersModal.jsx", import.meta.url), "utf8");
 
   assert.match(source, /adminUsers/);
+  assert.match(source, /includeSystem|显示系统身份/);
+  assert.match(source, /query|搜索/);
+  assert.match(source, /account_type|accountType|账号类型/);
   assert.match(source, /role/);
   assert.match(source, /status/);
+  assert.match(source, /editDisplayName|编辑显示名/);
   assert.match(source, /resetPassword|重置密码/);
+  assert.match(source, /revokeSessions|撤销会话/);
+  assert.match(source, /revokeApiTokens|撤销 API/);
+  assert.match(source, /window\.confirm/);
   assert.match(source, /disabled|禁用/);
+  assert.doesNotMatch(source, /<select className="form-input h-8 py-1"/);
 });

@@ -27,8 +27,14 @@ def require_admin(user: UserContext = Depends(current_user)) -> UserContext:
 
 
 @router.get("/users")
-def list_users(query: str = "", limit: int = 100, offset: int = 0, user: UserContext = Depends(require_admin)):
-    return {"users": auth_store_module.auth_store.list_users(query=query, limit=limit, offset=offset)}
+def list_users(
+    query: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    include_system: bool = False,
+    user: UserContext = Depends(require_admin),
+):
+    return {"users": auth_store_module.auth_store.list_users(query=query, limit=limit, offset=offset, include_system=include_system)}
 
 
 @router.patch("/users/{user_id}", dependencies=[Depends(require_csrf)])

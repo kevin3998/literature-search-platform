@@ -61,6 +61,65 @@ def test_admin_can_list_update_disable_and_enable_users(monkeypatch):
     assert enabled_login.status_code == 200
 
 
+def test_admin_users_default_hides_system_identities_and_can_include_them(monkeypatch):
+    import core.auth_store as auth_store_module
+    from api.admin_router import router as admin_router
+    from api.auth_router import router as auth_router
+    from core.auth_store import AuthStore
+
+    with migrated_postgres_schema():
+        from core.user_store import DEV_HEADER_PROVIDER, TRUSTED_HEADER_PROVIDER, UserStore
+
+        monkeypatch.setenv("AUTH_MODE", "local-password")
+        monkeypatch.setenv("COOKIE_NAME", "lap_admin_filter_session")
+        store = AuthStore()
+        monkeypatch.setattr(auth_store_module, "auth_store", store, raising=False)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        app.include_router(admin_router)
+        admin_client = TestClient(app)
+        user_client = TestClient(app)
+
+        admin_client.post(
+            "/api/auth/signup",
+            json={"email": "admin-filter@example.com", "display_name": "Admin Filter", "password": "password123"},
+        )
+        user_client.post(
+            "/api/auth/signup",
+            json={"email": "regular@example.com", "display_name": "Regular User", "password": "password123"},
+        )
+        user_store = UserStore(engine=store.engine)
+        user_store.get_or_create_user_for_subject(provider=DEV_HEADER_PROVIDER, subject="local_user", display_name="local_user")
+        user_store.get_or_create_user_for_subject(provider=TRUSTED_HEADER_PROVIDER, subject="chenlintao", display_name="chenlintao")
+
+        default_response = admin_client.get("/api/admin/users")
+        system_response = admin_client.get("/api/admin/users?include_system=true")
+        search_response = admin_client.get("/api/admin/users?query=chenlintao")
+
+    assert default_response.status_code == 200
+    default_users = default_response.json()["users"]
+    assert {user["email"] for user in default_users} == {"admin-filter@example.com", "regular@example.com"}
+    assert all(user["account_type"] == "local-password" for user in default_users)
+    assert all(user["providers"] == ["local-password"] for user in default_users)
+    assert all(user["has_password"] is True for user in default_users)
+    assert all(user["is_system_identity"] is False for user in default_users)
+
+    assert system_response.status_code == 200
+    system_users = system_response.json()["users"]
+    by_name = {user["display_name"]: user for user in system_users}
+    assert by_name["local_user"]["account_type"] == "system"
+    assert by_name["local_user"]["providers"] == ["dev-header"]
+    assert by_name["local_user"]["has_password"] is False
+    assert by_name["local_user"]["is_system_identity"] is True
+    assert by_name["chenlintao"]["account_type"] == "system"
+    assert by_name["chenlintao"]["providers"] == ["trusted-header"]
+    assert by_name["chenlintao"]["is_system_identity"] is True
+
+    assert search_response.status_code == 200
+    assert search_response.json()["users"] == []
+
+
 def test_admin_rejects_last_admin_demotion_and_disable(monkeypatch):
     import core.auth_store as auth_store_module
     from api.admin_router import router as admin_router
@@ -156,7 +215,8 @@ def test_admin_collection_routes_use_wrapper_contracts(monkeypatch):
     from core.user_context import UserContext, current_user
 
     class FakeAuthStore:
-        def list_users(self, query: str = "", limit: int = 100, offset: int = 0):
+        def list_users(self, query: str = "", limit: int = 100, offset: int = 0, include_system: bool = False):
+            assert include_system is True
             return [{"user_id": "user-1", "email": "admin@example.com"}]
 
         def list_audit_events(self, limit: int = 100, offset: int = 0):
@@ -168,7 +228,7 @@ def test_admin_collection_routes_use_wrapper_contracts(monkeypatch):
     monkeypatch.setattr(auth_store_module, "auth_store", FakeAuthStore(), raising=False)
     client = TestClient(app)
 
-    users_response = client.get("/api/admin/users")
+    users_response = client.get("/api/admin/users?include_system=true")
     audit_response = client.get("/api/admin/audit-events")
 
     assert users_response.status_code == 200

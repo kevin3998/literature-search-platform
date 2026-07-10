@@ -56,16 +56,22 @@ test("adminApi uses csrf headers for mutations and wraps query params", async ()
 
   const { adminApi } = await import(`../src/api/client.js?admin=${Date.now()}`);
 
-  await adminApi.users({ query: "alice", limit: 25 });
+  await adminApi.users({ query: "alice", limit: 25, include_system: true });
   await adminApi.updateUser("user 1", { status: "disabled" });
+  await adminApi.revokeSessions("user 1");
+  await adminApi.revokeApiTokens("user 1");
 
-  assert.equal(calls[0].url, "/api/admin/users?query=alice&limit=25");
+  assert.equal(calls[0].url, "/api/admin/users?query=alice&limit=25&include_system=true");
   assert.equal(calls[0].credentials, "include");
   assert.equal(calls[1].url, "/api/auth/csrf");
   assert.equal(calls[2].url, "/api/admin/users/user%201");
   assert.equal(calls[2].method, "PATCH");
   assert.equal(calls[2].headers["X-CSRF-Token"], "csrf-admin");
   assert.deepEqual(JSON.parse(calls[2].body), { status: "disabled" });
+  assert.equal(calls[3].url, "/api/admin/users/user%201/revoke-sessions");
+  assert.equal(calls[3].method, "POST");
+  assert.equal(calls[4].url, "/api/admin/users/user%201/revoke-api-tokens");
+  assert.equal(calls[4].method, "POST");
 });
 
 test("sessionApi normalizes backend snake_case sessions into frontend camelCase models", async () => {

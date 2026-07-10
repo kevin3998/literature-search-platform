@@ -49,6 +49,18 @@ function emptyWorkflowInsights(patch = {}) {
   return { ...EMPTY_WORKFLOW_INSIGHTS, ...patch };
 }
 
+const EMPTY_ADMIN_USERS = {
+  items: [],
+  query: "",
+  includeSystem: false,
+  loading: false,
+  error: null,
+};
+
+function emptyAdminUsers(patch = {}) {
+  return { ...EMPTY_ADMIN_USERS, ...patch };
+}
+
 const EMPTY_LITERATURE_PREVIEW = {
   mode: "answer",
   selectedEvidenceId: null,
@@ -348,7 +360,7 @@ export const useAppStore = create((set, get) => ({
       libraryLoaded: false,
       account: { sessions: [], apiTokens: [], lastCreatedToken: null, loading: false, error: null },
       adminUsersOpen: false,
-      adminUsers: { items: [], loading: false, error: null },
+      adminUsers: emptyAdminUsers(),
       auth: { status: "login_required", mode: "login", error: null, loading: false },
     });
   },
@@ -414,11 +426,7 @@ export const useAppStore = create((set, get) => ({
   },
 
   adminUsersOpen: false,
-  adminUsers: {
-    items: [],
-    loading: false,
-    error: null,
-  },
+  adminUsers: emptyAdminUsers(),
 
   literatureSearch: {
     activeToolTab: "chat",
@@ -3012,9 +3020,17 @@ export const useAppStore = create((set, get) => ({
   },
 
   async loadAdminUsers(params = {}) {
-    get().updateAdminUsers({ loading: true, error: null });
+    const current = get().adminUsers;
+    const query = params.query ?? current.query ?? "";
+    const includeSystem = params.includeSystem ?? params.include_system ?? current.includeSystem ?? false;
+    get().updateAdminUsers({ query, includeSystem, loading: true, error: null });
     try {
-      const body = await adminApi.users(params);
+      const body = await adminApi.users({
+        ...(params.limit !== undefined ? { limit: params.limit } : {}),
+        ...(params.offset !== undefined ? { offset: params.offset } : {}),
+        query,
+        include_system: includeSystem,
+      });
       const items = Array.isArray(body) ? body : body.users || [];
       get().updateAdminUsers({ items, loading: false });
       return items;
@@ -3040,6 +3056,28 @@ export const useAppStore = create((set, get) => ({
     try {
       await adminApi.resetPassword(id, { new_password: newPassword });
       get().updateAdminUsers({ loading: false });
+    } catch (e) {
+      get().updateAdminUsers({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async revokeAdminUserSessions(id) {
+    get().updateAdminUsers({ loading: true, error: null });
+    try {
+      await adminApi.revokeSessions(id);
+      await get().loadAdminUsers();
+    } catch (e) {
+      get().updateAdminUsers({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async revokeAdminUserApiTokens(id) {
+    get().updateAdminUsers({ loading: true, error: null });
+    try {
+      await adminApi.revokeApiTokens(id);
+      await get().loadAdminUsers();
     } catch (e) {
       get().updateAdminUsers({ loading: false, error: e.message });
       throw e;

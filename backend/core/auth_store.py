@@ -567,25 +567,89 @@ class AuthStore:
         user["api_token_id"] = str(row["token_id"])
         return user
 
-    def list_users(self, query: str = "", limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_users(self, query: str = "", limit: int = 100, offset: int = 0, include_system: bool = False) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         offset = max(0, int(offset))
         pattern = f"%{query.strip().lower()}%"
-        where = "where lower(coalesce(email, '') || ' ' || display_name) like :pattern" if query.strip() else ""
+        query_filter = """
+            and lower(
+                coalesce(u.email, '') || ' ' ||
+                u.display_name || ' ' ||
+                coalesce(identity_search.search_text, '')
+            ) like :pattern
+        """ if query.strip() else ""
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
                     f"""
-                    select user_id, display_name, status, email, role, avatar_url, last_login_at, created_at, updated_at
-                    from users
-                    {where}
+                    select
+                        u.user_id,
+                        u.display_name,
+                        u.status,
+                        u.email,
+                        u.role,
+                        u.avatar_url,
+                        u.last_login_at,
+                        u.created_at,
+                        u.updated_at,
+                        coalesce(identity_meta.providers, array[]::text[]) as providers,
+                        exists(
+                            select 1
+                            from user_credentials c
+                            where c.user_id = u.user_id
+                                and c.credential_type = 'password'
+                                and c.active = true
+                        ) as has_password,
+                        exists(
+                            select 1
+                            from user_identities local_identity
+                            where local_identity.user_id = u.user_id
+                                and local_identity.provider = :local_password_provider
+                        ) as has_local_password_identity
+                    from users u
+                    left join lateral (
+                        select array_agg(distinct i.provider order by i.provider) as providers
+                        from user_identities i
+                        where i.user_id = u.user_id
+                    ) identity_meta on true
+                    left join lateral (
+                        select string_agg(i.provider || ' ' || i.subject, ' ') as search_text
+                        from user_identities i
+                        where i.user_id = u.user_id
+                    ) identity_search on true
+                    where (
+                        :include_system
+                        or (
+                            u.email is not null
+                            and exists(
+                                select 1
+                                from user_identities local_identity
+                                where local_identity.user_id = u.user_id
+                                    and local_identity.provider = :local_password_provider
+                            )
+                            and exists(
+                                select 1
+                                from user_credentials c
+                                where c.user_id = u.user_id
+                                    and c.credential_type = 'password'
+                                    and c.active = true
+                            )
+                        )
+                    )
+                    {query_filter}
                     order by created_at desc
                     limit :limit offset :offset
                     """
                 ),
-                {"pattern": pattern, "limit": limit, "offset": offset},
+                {
+                    "pattern": pattern,
+                    "limit": limit,
+                    "offset": offset,
+                    "include_system": include_system,
+                    "local_password_provider": LOCAL_PASSWORD_PROVIDER,
+                },
             ).mappings().all()
-        return [_user_row(row) for row in rows]
+        return [_admin_user_row(row) for row in rows]
 
     def update_user_admin(
         self,
@@ -791,6 +855,23 @@ def _user_row(row: Any) -> dict[str, Any]:
         "avatar_url": row["avatar_url"],
         "last_login_at": row["last_login_at"],
     }
+
+
+def _admin_user_row(row: Any) -> dict[str, Any]:
+    user = _user_row(row)
+    providers = list(row["providers"] or [])
+    has_password = bool(row["has_password"])
+    has_local_password_identity = bool(row["has_local_password_identity"])
+    is_formal_local_account = bool(user["email"] and has_password and has_local_password_identity)
+    user.update(
+        {
+            "providers": providers,
+            "account_type": LOCAL_PASSWORD_PROVIDER if is_formal_local_account else "system",
+            "has_password": has_password,
+            "is_system_identity": not is_formal_local_account,
+        }
+    )
+    return user
 
 
 def _session_row(row: Any) -> dict[str, Any]:
