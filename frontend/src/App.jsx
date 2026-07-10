@@ -9,6 +9,7 @@ import HomeDashboard from "./components/HomeDashboard";
 import WorkflowView from "./components/WorkflowView";
 import StructuredExtractionWorkbench from "./components/StructuredExtractionWorkbench";
 import AuthScreen from "./components/AuthScreen";
+import AdminUsersModal from "./components/AdminUsersModal";
 import { useAppStore } from "./store/useAppStore";
 import { AlertTriangle, X } from "lucide-react";
 
@@ -75,6 +76,7 @@ export default function App() {
       {/* Settings opens as a centered modal over the current workbench so closing
           it returns the user to the exact prior session/workbench state. */}
       <SettingsModal />
+      <AdminUsersModal />
     </div>
   );
 }

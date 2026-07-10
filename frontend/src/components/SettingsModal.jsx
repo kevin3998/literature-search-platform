@@ -238,19 +238,45 @@ export default function SettingsModal() {
 
 // ── Categories ────────────────────────────────────────────────────────────────
 
-// Placeholder profile shape — kept stable so a future login/account system can
-// fill it from an API (e.g. /api/account/profile) without reworking this UI.
-const ACCOUNT_PLACEHOLDER = {
-  display_name: "本地用户",
-  email: "—",
-  role: "管理员",
-  login_method: "API 密钥",
-  avatar_url: null,
-};
-
 function AccountCategory() {
-  const account = ACCOUNT_PLACEHOLDER; // TODO: replace with real account data once login lands
-  const initial = (account.display_name || "?").trim().charAt(0) || "?";
+  const currentUser = useAppStore((s) => s.currentUser);
+  const accountState = useAppStore((s) => s.account);
+  const loadAccountSecurity = useAppStore((s) => s.loadAccountSecurity);
+  const updateAccountProfile = useAppStore((s) => s.updateAccountProfile);
+  const changePassword = useAppStore((s) => s.changeAccountPassword);
+  const createApiToken = useAppStore((s) => s.createAccountApiToken);
+  const revokeApiToken = useAppStore((s) => s.revokeAccountApiToken);
+  const [displayName, setDisplayName] = useState(currentUser?.display_name || currentUser?.displayName || "");
+  const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatar_url || currentUser?.avatarUrl || "");
+  const [passwords, setPasswords] = useState({ current_password: "", new_password: "" });
+  const [tokenName, setTokenName] = useState("CLI");
+  const initial = (currentUser?.display_name || currentUser?.displayName || currentUser?.email || "?").trim().charAt(0) || "?";
+  const apiTokens = accountState.apiTokens || [];
+  const sessions = accountState.sessions || [];
+
+  useEffect(() => { loadAccountSecurity().catch(() => {}); }, [loadAccountSecurity]);
+  useEffect(() => {
+    setDisplayName(currentUser?.display_name || currentUser?.displayName || "");
+    setAvatarUrl(currentUser?.avatar_url || currentUser?.avatarUrl || "");
+  }, [currentUser]);
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    await updateAccountProfile({ display_name: displayName, avatar_url: avatarUrl || null });
+  };
+
+  const submitPassword = async (event) => {
+    event.preventDefault();
+    await changePassword(passwords);
+    setPasswords({ current_password: "", new_password: "" });
+  };
+
+  const submitToken = async (event) => {
+    event.preventDefault();
+    await createApiToken({ name: tokenName || "API Token" });
+    setTokenName("CLI");
+  };
+
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-line bg-paper-0 p-4">
@@ -258,39 +284,98 @@ function AccountCategory() {
 
         <Group title="登录状态">
           <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-paper-50 px-3 py-2">
-            <span className="text-[13px] text-ink-700">已通过 API 密钥登录</span>
-            <StatusPill status="ok" text="只读占位" />
+            <span className="min-w-0 truncate text-[13px] text-ink-700">{currentUser?.email || "未记录邮箱"}</span>
+            <StatusPill status={currentUser?.status === "active" ? "ok" : "warning"} text={currentUser?.status || "unknown"} />
           </div>
         </Group>
 
         <Group title="个人资料">
           <div className="flex items-center gap-3">
             <span className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-ink-900 text-[18px] font-serif text-paper-50">
-              {account.avatar_url ? <img src={account.avatar_url} alt="" className="h-full w-full rounded-full object-cover" /> : initial}
+              {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover" /> : initial}
             </span>
             <div className="min-w-0">
-              <div className="text-[14px] text-ink-900">{account.display_name}</div>
-              <div className="text-[12.5px] text-ink-500">{account.email}</div>
+              <div className="text-[14px] text-ink-900">{currentUser?.display_name || currentUser?.displayName || "未命名用户"}</div>
+              <div className="text-[12.5px] text-ink-500">{currentUser?.email || "—"}</div>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12.5px]">
-            <KV label="角色" value={account.role} />
-            <KV label="登录方式" value={account.login_method} />
+            <KV label="角色" value={currentUser?.role || "user"} />
+            <KV label="认证模式" value={currentUser?.auth_mode || currentUser?.authMode || "local-password"} />
           </div>
+          <form onSubmit={saveProfile} className="mt-4 space-y-3">
+            <FormGrid>
+              <Field label="显示名">
+                <input className="form-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              </Field>
+              <Field label="头像 URL">
+                <input className="form-input" value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." />
+              </Field>
+            </FormGrid>
+            <button className="btn-dark" type="submit" disabled={accountState.loading}>保存资料</button>
+          </form>
         </Group>
 
-        <Group title="后续动作">
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-light cursor-not-allowed opacity-60" disabled title="后续接入登录体系">编辑资料</button>
-            <button className="btn-light cursor-not-allowed opacity-60" disabled title="后续接入登录体系">修改密码</button>
-            <button className="btn-light cursor-not-allowed opacity-60" disabled title="后续接入登录体系">退出登录</button>
-          </div>
+        <Group title="修改密码">
+          <form onSubmit={submitPassword} className="space-y-3">
+            <FormGrid>
+              <Field label="当前密码">
+                <input className="form-input" type="password" value={passwords.current_password} onChange={(event) => setPasswords((value) => ({ ...value, current_password: event.target.value }))} required autoComplete="current-password" />
+              </Field>
+              <Field label="新密码">
+                <input className="form-input" type="password" value={passwords.new_password} onChange={(event) => setPasswords((value) => ({ ...value, new_password: event.target.value }))} required minLength={8} autoComplete="new-password" />
+              </Field>
+            </FormGrid>
+            <button className="btn-light" type="submit" disabled={accountState.loading}>修改密码</button>
+          </form>
         </Group>
 
-        <p className="mt-1 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-[12px] text-ink-700">
-          账户与登录体系尚未接入。以上为占位信息，后续将支持真实登录、个人资料编辑、修改密码与退出登录。
-        </p>
+        <Group title="浏览器会话">
+          {sessions.length === 0 ? <EmptyState text="暂无活跃会话记录。" /> : (
+            <div className="overflow-hidden rounded-md border border-line">
+              {sessions.map((session) => <AccountRow key={session.session_id || session.sessionId} left={session.user_agent || session.userAgent || "Browser session"} right={fmtDateTime(session.last_seen_at || session.lastSeenAt || session.created_at || session.createdAt)} />)}
+            </div>
+          )}
+        </Group>
+
+        <Group title="API Tokens">
+          <form onSubmit={submitToken} className="mb-3 flex flex-wrap items-end gap-2">
+            <Field label="名称">
+              <input className="form-input min-w-[220px]" value={tokenName} onChange={(event) => setTokenName(event.target.value)} required />
+            </Field>
+            <button className="btn-dark" type="submit" disabled={accountState.loading}>创建 API Token</button>
+          </form>
+          {accountState.lastCreatedToken?.api_token && (
+            <div className="mb-3 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-[12px] text-ink-700">
+              新 Token：<code className="break-all font-mono">{accountState.lastCreatedToken.api_token}</code>
+            </div>
+          )}
+          {apiTokens.length === 0 ? <EmptyState text="暂无 API Token。" /> : (
+            <div className="overflow-hidden rounded-md border border-line">
+              {apiTokens.map((token) => (
+                <div key={token.token_id || token.tokenId} className="flex items-center justify-between gap-3 border-b border-line px-3 py-2 last:border-b-0">
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] text-ink-800">{token.name}</div>
+                    <div className="font-mono text-[11px] text-ink-500">{token.token_preview || token.tokenPreview || "lap_..."} · 创建 {fmtDateTime(token.created_at || token.createdAt)}</div>
+                  </div>
+                  <button className="btn-light" type="button" onClick={() => revokeApiToken(token.token_id || token.tokenId)} disabled={accountState.loading}>撤销</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Group>
+
+        {accountState.error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">{accountState.error}</div>}
       </section>
+    </div>
+  );
+}
+
+function AccountRow({ left, right }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-2 last:border-b-0">
+      <span className="min-w-0 truncate text-[13px] text-ink-800">{left}</span>
+      <span className="flex-shrink-0 font-mono text-[11px] text-ink-500">{right || "—"}</span>
     </div>
   );
 }
@@ -1166,6 +1251,16 @@ function statusText(status) {
     missing: "未配置",
     skipped_no_api_key: "缺少密钥已跳过",
   }[status] || status || "-";
+}
+
+function fmtDateTime(value) {
+  if (!value) return "—";
+  const ms = typeof value === "number" && value < 100000000000 ? value * 1000 : value;
+  try {
+    return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return String(value);
+  }
 }
 
 function EmptyState({ text }) {

@@ -371,3 +371,15 @@
   - `cd frontend && node --test tests/literature_search_store_contract.test.mjs tests/auth_ui_contract.test.mjs` -> 12 passed.
   - `cd frontend && node --test tests/*.test.mjs` -> 88 passed.
   - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 9
+- Added Account settings and Admin Users UI:
+  - Settings Account tab now uses `currentUser`, supports display name/avatar update, password change, active sessions display, and API token create/revoke;
+  - store now owns `account`, `adminUsersOpen`, and `adminUsers` state with account/admin API actions;
+  - TopBar shows the current user and provides Account, Admin Users (admin only), and Logout icon actions;
+  - `AdminUsersModal.jsx` provides role/status controls and password reset for admins.
+- Verification:
+  - `cd frontend && node --test tests/auth_ui_contract.test.mjs` -> 3 passed.
+  - `cd frontend && node --test tests/auth_ui_contract.test.mjs tests/literature_search_store_contract.test.mjs` -> 14 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 90 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.

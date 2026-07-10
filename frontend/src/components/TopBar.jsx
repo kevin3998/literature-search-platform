@@ -1,5 +1,6 @@
 import React from "react";
 import { useAppStore } from "../store/useAppStore";
+import { LogOut, UserRound, Users } from "lucide-react";
 
 export default function TopBar() {
   const modules = useAppStore((s) => s.modules);
@@ -8,6 +9,10 @@ export default function TopBar() {
   const workflowOpen = useAppStore((s) => s.workflowOpen);
   const structuredExtractionOpen = useAppStore((s) => s.structuredExtractionOpen);
   const settingsOpen = useAppStore((s) => s.settings.open);
+  const currentUser = useAppStore((s) => s.currentUser);
+  const openSettings = useAppStore((s) => s.openSettings);
+  const openAdminUsers = useAppStore((s) => s.openAdminUsers);
+  const authLogout = useAppStore((s) => s.authLogout);
   const session = useAppStore((s) => {
     const sid = s.activeSessionByModule[s.activeModuleId];
     return s.sessionsById[sid];
@@ -37,8 +42,22 @@ export default function TopBar() {
         <span className="text-[13px] text-ink-500 truncate">{subtitle}</span>
       </div>
       <div className="flex items-center gap-2 text-[12px] text-ink-500 flex-shrink-0">
-        <span className="w-1.5 h-1.5 rounded-full bg-teal" />
-        本地文献库已连接
+        <span className="hidden items-center gap-2 sm:inline-flex">
+          <span className="w-1.5 h-1.5 rounded-full bg-teal" />
+          本地文献库已连接
+        </span>
+        {currentUser && <span className="max-w-[160px] truncate text-ink-700">{currentUser.display_name || currentUser.displayName || currentUser.email}</span>}
+        <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-500 hover:bg-paper-100 hover:text-ink-900" title="账户" onClick={() => openSettings("account")}>
+          <UserRound size={15} />
+        </button>
+        {currentUser?.role === "admin" && (
+          <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-500 hover:bg-paper-100 hover:text-ink-900" title="管理员用户" onClick={openAdminUsers}>
+            <Users size={15} />
+          </button>
+        )}
+        <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-500 hover:bg-paper-100 hover:text-ink-900" title="退出登录" onClick={authLogout}>
+          <LogOut size={15} />
+        </button>
       </div>
     </div>
   );

@@ -1610,7 +1610,7 @@ git commit -m "feat: add frontend auth bootstrap"
 - Modify: `frontend/src/store/useAppStore.js`
 - Modify: `frontend/tests/auth_ui_contract.test.mjs`
 
-- [ ] **Step 1: Write UI contract tests**
+- [x] **Step 1: Write UI contract tests**
 
 Extend `frontend/tests/auth_ui_contract.test.mjs`:
 
@@ -1635,7 +1635,7 @@ test("admin users modal contains role status and reset actions", async () => {
 });
 ```
 
-- [ ] **Step 2: Run UI tests and verify they fail**
+- [x] **Step 2: Run UI tests and verify they fail**
 
 Run:
 
@@ -1645,7 +1645,7 @@ cd frontend && node --test tests/auth_ui_contract.test.mjs
 
 Expected: FAIL because Account is still placeholder and AdminUsersModal does not exist.
 
-- [ ] **Step 3: Add store state/actions**
+- [x] **Step 3: Add store state/actions**
 
 In `frontend/src/store/useAppStore.js`, add:
 
@@ -1680,7 +1680,7 @@ async updateAdminUser(id, payload) { ...adminApi.updateUser(id, payload); reload
 async resetAdminUserPassword(id, newPassword) { ...adminApi.resetPassword(id, { new_password: newPassword })... }
 ```
 
-- [ ] **Step 4: Replace Account placeholder**
+- [x] **Step 4: Replace Account placeholder**
 
 In `frontend/src/components/SettingsModal.jsx`, delete `ACCOUNT_PLACEHOLDER`. Make `AccountCategory()` read:
 
@@ -1708,7 +1708,7 @@ API token list and create form
 
 Keep styling consistent with existing settings groups and avoid nested cards.
 
-- [ ] **Step 5: Add TopBar user menu**
+- [x] **Step 5: Add TopBar user menu**
 
 Modify `frontend/src/components/TopBar.jsx`:
 
@@ -1730,7 +1730,7 @@ Logout button
 
 Use lucide icons: `UserRound`, `Users`, `LogOut`.
 
-- [ ] **Step 6: Create AdminUsersModal**
+- [x] **Step 6: Create AdminUsersModal**
 
 Create `frontend/src/components/AdminUsersModal.jsx` with:
 
@@ -1755,7 +1755,7 @@ Protect UI:
 if (!open) return null;
 ```
 
-- [ ] **Step 7: Mount AdminUsersModal**
+- [x] **Step 7: Mount AdminUsersModal**
 
 In `frontend/src/App.jsx`:
 
@@ -1765,7 +1765,7 @@ import AdminUsersModal from "./components/AdminUsersModal";
 <AdminUsersModal />
 ```
 
-- [ ] **Step 8: Run frontend UI tests and build**
+- [x] **Step 8: Run frontend UI tests and build**
 
 Run:
 
@@ -1776,7 +1776,7 @@ cd frontend && npm run build
 
 Expected: PASS and build succeeds.
 
-- [ ] **Step 9: Commit UI task**
+- [x] **Step 9: Commit UI task**
 
 ```bash
 git add frontend/src/components/SettingsModal.jsx frontend/src/components/TopBar.jsx frontend/src/components/AdminUsersModal.jsx frontend/src/store/useAppStore.js frontend/src/App.jsx frontend/tests/auth_ui_contract.test.mjs

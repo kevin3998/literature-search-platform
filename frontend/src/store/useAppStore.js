@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { authApi, corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
+import { accountApi, adminApi, authApi, corpusApi, fetchModules, fetchLibrary, literatureSearchApi, modelProfilesApi, sessionApi, settingsApi, streamChat, streamLiteratureSearchJob, structuredExtractionApi, workflowApi, streamWorkflow } from "../api/client.js";
 
 // Block 7/10: human-readable status text for the workflow run log.
 const STEP_STATUS_TEXT = { running: "执行中", done: "完成", failed: "失败", blocked: "已阻塞", pending: "待执行", skipped: "已跳过", unavailable: "敬请期待" };
@@ -346,6 +346,9 @@ export const useAppStore = create((set, get) => ({
       sessionContextMenu: null,
       library: [],
       libraryLoaded: false,
+      account: { sessions: [], apiTokens: [], lastCreatedToken: null, loading: false, error: null },
+      adminUsersOpen: false,
+      adminUsers: { items: [], loading: false, error: null },
       auth: { status: "login_required", mode: "login", error: null, loading: false },
     });
   },
@@ -400,6 +403,21 @@ export const useAppStore = create((set, get) => ({
     loading: false,
     error: null,
     testById: {},
+  },
+
+  account: {
+    sessions: [],
+    apiTokens: [],
+    lastCreatedToken: null,
+    loading: false,
+    error: null,
+  },
+
+  adminUsersOpen: false,
+  adminUsers: {
+    items: [],
+    loading: false,
+    error: null,
   },
 
   literatureSearch: {
@@ -2903,6 +2921,7 @@ export const useAppStore = create((set, get) => ({
   async openSettings(tab = "general") {
     get().updateSettings({ open: true, activeTab: tab, error: null });
     await get().loadSettings();
+    if (tab === "account") get().loadAccountSecurity().catch(() => {});
   },
 
   closeSettings() {
@@ -2911,6 +2930,120 @@ export const useAppStore = create((set, get) => ({
 
   setSettingsTab(tab) {
     get().updateSettings({ activeTab: tab });
+    if (tab === "account") get().loadAccountSecurity().catch(() => {});
+  },
+
+  updateAccount(patch) {
+    set((state) => ({ account: { ...state.account, ...patch } }));
+  },
+
+  async loadAccountSecurity() {
+    get().updateAccount({ loading: true, error: null });
+    try {
+      const [sessions, tokenBody] = await Promise.all([accountApi.sessions(), accountApi.apiTokens()]);
+      const apiTokens = Array.isArray(tokenBody) ? tokenBody : tokenBody.tokens || [];
+      get().updateAccount({ sessions: sessions || [], apiTokens, loading: false });
+      return { sessions: sessions || [], apiTokens };
+    } catch (e) {
+      get().updateAccount({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async updateAccountProfile(payload) {
+    get().updateAccount({ loading: true, error: null });
+    try {
+      const user = await accountApi.updateProfile(payload);
+      set({ currentUser: user });
+      get().updateAccount({ loading: false });
+      return user;
+    } catch (e) {
+      get().updateAccount({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async changeAccountPassword(payload) {
+    get().updateAccount({ loading: true, error: null });
+    try {
+      await accountApi.changePassword(payload);
+      get().updateAccount({ loading: false });
+    } catch (e) {
+      get().updateAccount({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async createAccountApiToken(payload) {
+    get().updateAccount({ loading: true, error: null, lastCreatedToken: null });
+    try {
+      const token = await accountApi.createApiToken(payload);
+      await get().loadAccountSecurity();
+      get().updateAccount({ lastCreatedToken: token, loading: false });
+      return token;
+    } catch (e) {
+      get().updateAccount({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async revokeAccountApiToken(id) {
+    get().updateAccount({ loading: true, error: null });
+    try {
+      await accountApi.revokeApiToken(id);
+      await get().loadAccountSecurity();
+    } catch (e) {
+      get().updateAccount({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  updateAdminUsers(patch) {
+    set((state) => ({ adminUsers: { ...state.adminUsers, ...patch } }));
+  },
+
+  openAdminUsers() {
+    set({ adminUsersOpen: true });
+    get().loadAdminUsers().catch(() => {});
+  },
+
+  closeAdminUsers() {
+    set({ adminUsersOpen: false });
+  },
+
+  async loadAdminUsers(params = {}) {
+    get().updateAdminUsers({ loading: true, error: null });
+    try {
+      const body = await adminApi.users(params);
+      const items = Array.isArray(body) ? body : body.users || [];
+      get().updateAdminUsers({ items, loading: false });
+      return items;
+    } catch (e) {
+      get().updateAdminUsers({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async updateAdminUser(id, payload) {
+    get().updateAdminUsers({ loading: true, error: null });
+    try {
+      await adminApi.updateUser(id, payload);
+      await get().loadAdminUsers();
+    } catch (e) {
+      get().updateAdminUsers({ loading: false, error: e.message });
+      throw e;
+    }
+  },
+
+  async resetAdminUserPassword(id, newPassword) {
+    get().updateAdminUsers({ loading: true, error: null });
+    try {
+      await adminApi.resetPassword(id, { new_password: newPassword });
+      get().updateAdminUsers({ loading: false });
+    } catch (e) {
+      get().updateAdminUsers({ loading: false, error: e.message });
+      throw e;
+    }
   },
 
   async loadSettings() {
