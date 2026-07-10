@@ -56,6 +56,87 @@ test("literature search preview actions switch between answer and detail modes",
   assert.equal(useAppStore.getState().literatureSearch.preview.selectedAuditId, null);
 });
 
+test("auth bootstrap shows login required when me returns 401", async () => {
+  installWindowStub();
+  globalThis.fetch = async (url) => {
+    if (url === "/api/auth/me") {
+      return new Response(JSON.stringify({ detail: "not authenticated" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  const { useAppStore } = await import(`../src/store/useAppStore.js?auth401=${Date.now()}`);
+  await useAppStore.getState().bootstrapAuth();
+
+  assert.equal(useAppStore.getState().auth.status, "login_required");
+  assert.equal(useAppStore.getState().currentUser, null);
+  assert.equal(useAppStore.getState().modulesLoaded, true);
+});
+
+test("auth bootstrap loads modules when user is authenticated", async () => {
+  installWindowStub();
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET", credentials: options.credentials });
+    if (url === "/api/auth/me") {
+      return new Response(
+        JSON.stringify({ user_id: "u1", email: "alice@example.com", display_name: "Alice", role: "admin", status: "active" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url === "/api/modules") {
+      return new Response(JSON.stringify([{ id: "literature_search", name: "文献检索分析", status: "active" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/settings/effective") {
+      return new Response(JSON.stringify({ "general.default_module": { value: "literature_search" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/corpus/dashboard") {
+      return new Response(JSON.stringify({ status: "ok" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/sessions?module_id=literature_search&include_archived=false") {
+      return new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/sessions" && options.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          session_id: "s_boot",
+          module_id: "literature_search",
+          user_id: "u1",
+          title: "新对话",
+          status: "active",
+          tags: [],
+          favorite: false,
+          pinned: false,
+          archived: false,
+          deleted_at: null,
+          created_at: 1,
+          updated_at: 1,
+          last_message_at: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+
+  const { useAppStore } = await import(`../src/store/useAppStore.js?auth200=${Date.now()}`);
+  await useAppStore.getState().bootstrapAuth();
+
+  assert.equal(useAppStore.getState().auth.status, "authenticated");
+  assert.equal(useAppStore.getState().currentUser.email, "alice@example.com");
+  assert.ok(calls.some((call) => call.url === "/api/modules" && call.credentials === "include"));
+  assert.equal(useAppStore.getState().activeModuleId, "literature_search");
+});
+
 test("selectModule opens an auto-created empty literature session without requiring detail hydration", async () => {
   installWindowStub();
   const calls = [];

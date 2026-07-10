@@ -13,6 +13,7 @@ def test_dev_script_checks_structured_extraction_routes_before_marking_ready():
 
     assert "BACKEND_CONTRACT_PROBE" in script
     assert "/api/structured-extraction/tasks/__route_probe__/collection/candidates" in script
+    assert 'probe_status" == "401"' in script
     assert "backend_contract_ok" in script
     assert "后端已就绪" not in script.split("backend_contract_ok", 1)[0]
 

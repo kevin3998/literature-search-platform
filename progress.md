@@ -346,3 +346,53 @@
   - `PYTHONPATH=backend pytest backend/tests -q` -> 713 passed, 24 skipped.
   - `node --test frontend/tests/*.test.mjs` -> 69 passed.
   - `npm --prefix frontend run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-09 formal user management task 7
+- Added formal browser-auth frontend API contracts and client support:
+  - exported `authApi`, `accountApi`, and `adminApi` from `frontend/src/api/client.js`;
+  - all formal browser API calls send `credentials: "include"`;
+  - account/admin/logout mutations fetch `/api/auth/csrf` and send `X-CSRF-Token`;
+  - admin user/audit queries use encoded query strings and user IDs.
+- Kept the existing development `X-User-Id` adapter behavior through `apiHeaders()` / `apiUploadHeaders()`.
+- Verification:
+  - `cd frontend && node --test tests/api_client_contract.test.mjs` -> 40 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 85 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 8
+- Added frontend auth bootstrap and login/registration gate:
+  - `useAppStore` now owns `currentUser`, `auth.status`, `auth.mode`, `auth.loading`, and `auth.error`;
+  - `bootstrapAuth()` calls `/api/auth/me`, sends authenticated users into `loadModules()`, and leaves unauthenticated users at `login_required` without loading modules;
+  - `authLogin()`, `authSignup()`, and `authLogout()` call the formal auth API client and reset browser app state on logout;
+  - `App.jsx` now checks auth first and renders `AuthScreen` when login is required;
+  - `AuthScreen.jsx` provides compact email/password login and self-service registration with display name.
+- Also made `fetchModules()` and `fetchLibrary()` send `credentials: "include"` so the authenticated startup path carries the DB session cookie.
+- Verification:
+  - `cd frontend && node --test tests/literature_search_store_contract.test.mjs tests/auth_ui_contract.test.mjs` -> 12 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 88 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 9
+- Added Account settings and Admin Users UI:
+  - Settings Account tab now uses `currentUser`, supports display name/avatar update, password change, active sessions display, and API token create/revoke;
+  - store now owns `account`, `adminUsersOpen`, and `adminUsers` state with account/admin API actions;
+  - TopBar shows the current user and provides Account, Admin Users (admin only), and Logout icon actions;
+  - `AdminUsersModal.jsx` provides role/status controls and password reset for admins.
+- Verification:
+  - `cd frontend && node --test tests/auth_ui_contract.test.mjs` -> 3 passed.
+  - `cd frontend && node --test tests/auth_ui_contract.test.mjs tests/literature_search_store_contract.test.mjs` -> 14 passed.
+  - `cd frontend && node --test tests/*.test.mjs` -> 90 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+
+## 2026-07-10 formal user management task 10
+- Documented formal local login and deployment readiness:
+  - `.env.example` keeps `AUTH_MODE=dev-header` as the development default and adds commented local-password cookie/session settings;
+  - `docs/deployment.md` now describes Formal Local Login, first-admin bootstrap, opaque `lap_session`, CSRF cookie/header, API tokens, and trusted-header as an SSO/reverse-proxy bridge;
+  - `README.md` now points teams to `AUTH_MODE=local-password` for formal browser login and removes the stale local retrieval-summary fallback statement.
+- Verification:
+  - `PYTHONPATH=backend pytest backend/tests/test_auth_config.py backend/tests/test_passwords.py backend/tests/test_formal_auth.py backend/tests/test_account_api.py backend/tests/test_admin_users_api.py backend/tests/test_postgres_migrations.py -q -rs` -> 21 passed, 23 skipped because `TEST_DATABASE_URL` is not configured.
+  - `PYTHONPATH=backend pytest backend/tests/test_postgres_m2_core_runtime.py backend/tests/test_user_context.py backend/tests/test_api_contract_sessions_chat.py backend/tests/test_api_contract_settings_workflow.py -q -rs` -> 10 passed, 5 skipped because `TEST_DATABASE_URL` / `DATABASE_URL` runtime DB coverage is not configured.
+  - Explicit `TEST_DATABASE_URL=postgresql+psycopg://literature_agent:...@127.0.0.1:5432/literature_agent` attempts failed before test logic because local Postgres lacks role `literature_agent`; no app code failure was indicated.
+  - `cd frontend && node --test tests/api_client_contract.test.mjs tests/literature_search_store_contract.test.mjs tests/auth_ui_contract.test.mjs` -> 54 passed.
+  - `cd frontend && npm run build` -> passed with only the existing Vite chunk-size warning.
+- Manual dev-server smoke was not run: existing services already occupy `8000` and `5173`, `dev.sh` would stop the existing backend on `8000`, Vite proxy is fixed to `8000`, and the local test DB role is absent.

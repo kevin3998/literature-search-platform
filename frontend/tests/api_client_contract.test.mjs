@@ -23,6 +23,51 @@ test("settings model profiles keep actions visible and offer supported DeepSeek 
   assert.ok(!source.includes('<table className="w-full text-[13px]">'));
 });
 
+test("authApi uses cookie credentials and account mutations include csrf", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET", credentials: options.credentials, headers: options.headers || {}, body: options.body });
+    if (url === "/api/auth/csrf") return jsonResponse({ csrf_token: "csrf-1" });
+    if (url === "/api/auth/me") return jsonResponse({ user_id: "u1", email: "alice@example.com", display_name: "Alice", role: "admin", status: "active" });
+    return jsonResponse({ ok: true });
+  };
+
+  const { authApi, accountApi } = await import(`../src/api/client.js?auth=${Date.now()}`);
+
+  await authApi.me();
+  await accountApi.updateProfile({ display_name: "Alice Chen" });
+
+  assert.equal(calls[0].url, "/api/auth/me");
+  assert.equal(calls[0].credentials, "include");
+  assert.equal(calls[1].url, "/api/auth/csrf");
+  assert.equal(calls[1].credentials, "include");
+  assert.equal(calls[2].url, "/api/account/profile");
+  assert.equal(calls[2].headers["X-CSRF-Token"], "csrf-1");
+  assert.equal(calls[2].credentials, "include");
+});
+
+test("adminApi uses csrf headers for mutations and wraps query params", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET", credentials: options.credentials, headers: options.headers || {}, body: options.body });
+    if (url === "/api/auth/csrf") return jsonResponse({ csrf_token: "csrf-admin" });
+    return jsonResponse({ users: [], audit_events: [], ok: true });
+  };
+
+  const { adminApi } = await import(`../src/api/client.js?admin=${Date.now()}`);
+
+  await adminApi.users({ query: "alice", limit: 25 });
+  await adminApi.updateUser("user 1", { status: "disabled" });
+
+  assert.equal(calls[0].url, "/api/admin/users?query=alice&limit=25");
+  assert.equal(calls[0].credentials, "include");
+  assert.equal(calls[1].url, "/api/auth/csrf");
+  assert.equal(calls[2].url, "/api/admin/users/user%201");
+  assert.equal(calls[2].method, "PATCH");
+  assert.equal(calls[2].headers["X-CSRF-Token"], "csrf-admin");
+  assert.deepEqual(JSON.parse(calls[2].body), { status: "disabled" });
+});
+
 test("sessionApi normalizes backend snake_case sessions into frontend camelCase models", async () => {
   let requestedUrl = null;
   globalThis.fetch = async (url) => {

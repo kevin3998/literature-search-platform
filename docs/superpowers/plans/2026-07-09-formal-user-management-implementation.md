@@ -1221,7 +1221,7 @@ git commit -m "feat: authenticate api tokens"
 - Modify: `frontend/src/api/client.js`
 - Modify: `frontend/tests/api_client_contract.test.mjs`
 
-- [ ] **Step 1: Write frontend API tests**
+- [x] **Step 1: Write frontend API tests**
 
 Add to `frontend/tests/api_client_contract.test.mjs`:
 
@@ -1249,7 +1249,7 @@ test("authApi uses cookie credentials and account mutations include csrf", async
 });
 ```
 
-- [ ] **Step 2: Run frontend API test and verify it fails**
+- [x] **Step 2: Run frontend API test and verify it fails**
 
 Run:
 
@@ -1259,7 +1259,7 @@ cd frontend && node --test tests/api_client_contract.test.mjs
 
 Expected: FAIL because `authApi` and `accountApi` do not exist.
 
-- [ ] **Step 3: Update frontend API client**
+- [x] **Step 3: Update frontend API client**
 
 In `frontend/src/api/client.js`:
 
@@ -1321,7 +1321,7 @@ export const adminApi = {
 
 Update existing `apiRequest()` and `multipartRequest()` to pass `credentials: "include"` so cookie auth works for all existing APIs.
 
-- [ ] **Step 4: Run frontend API tests**
+- [x] **Step 4: Run frontend API tests**
 
 Run:
 
@@ -1331,7 +1331,7 @@ cd frontend && node --test tests/api_client_contract.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit frontend API task**
+- [x] **Step 5: Commit frontend API task**
 
 ```bash
 git add frontend/src/api/client.js frontend/tests/api_client_contract.test.mjs
@@ -1349,7 +1349,7 @@ git commit -m "feat: add frontend auth api client"
 - Modify: `frontend/tests/literature_search_store_contract.test.mjs`
 - Create: `frontend/tests/auth_ui_contract.test.mjs`
 
-- [ ] **Step 1: Write store bootstrap tests**
+- [x] **Step 1: Write store bootstrap tests**
 
 Add to `frontend/tests/literature_search_store_contract.test.mjs`:
 
@@ -1390,7 +1390,7 @@ test("auth bootstrap loads modules when user is authenticated", async () => {
 });
 ```
 
-- [ ] **Step 2: Write UI source contract test**
+- [x] **Step 2: Write UI source contract test**
 
 Create `frontend/tests/auth_ui_contract.test.mjs`:
 
@@ -1410,7 +1410,7 @@ test("auth screen contains login and registration forms", async () => {
 });
 ```
 
-- [ ] **Step 3: Run tests and verify they fail**
+- [x] **Step 3: Run tests and verify they fail**
 
 Run:
 
@@ -1420,7 +1420,7 @@ cd frontend && node --test tests/literature_search_store_contract.test.mjs tests
 
 Expected: FAIL because auth store and `AuthScreen.jsx` do not exist.
 
-- [ ] **Step 4: Add auth state and actions**
+- [x] **Step 4: Add auth state and actions**
 
 Modify import in `frontend/src/store/useAppStore.js`:
 
@@ -1491,7 +1491,7 @@ async authLogout() {
 },
 ```
 
-- [ ] **Step 5: Add AuthScreen component**
+- [x] **Step 5: Add AuthScreen component**
 
 Create `frontend/src/components/AuthScreen.jsx`:
 
@@ -1552,7 +1552,7 @@ export default function AuthScreen() {
 }
 ```
 
-- [ ] **Step 6: Gate App by auth**
+- [x] **Step 6: Gate App by auth**
 
 Modify `frontend/src/App.jsx`:
 
@@ -1581,7 +1581,7 @@ if (authStatus === "login_required") {
 
 Remove the old `loadModules()` startup call from `App.jsx`; `bootstrapAuth()` now calls it after auth succeeds.
 
-- [ ] **Step 7: Run frontend tests and build**
+- [x] **Step 7: Run frontend tests and build**
 
 Run:
 
@@ -1592,7 +1592,7 @@ cd frontend && npm run build
 
 Expected: tests PASS and build succeeds.
 
-- [ ] **Step 8: Commit auth bootstrap task**
+- [x] **Step 8: Commit auth bootstrap task**
 
 ```bash
 git add frontend/src/store/useAppStore.js frontend/src/App.jsx frontend/src/components/AuthScreen.jsx frontend/tests/literature_search_store_contract.test.mjs frontend/tests/auth_ui_contract.test.mjs
@@ -1610,7 +1610,7 @@ git commit -m "feat: add frontend auth bootstrap"
 - Modify: `frontend/src/store/useAppStore.js`
 - Modify: `frontend/tests/auth_ui_contract.test.mjs`
 
-- [ ] **Step 1: Write UI contract tests**
+- [x] **Step 1: Write UI contract tests**
 
 Extend `frontend/tests/auth_ui_contract.test.mjs`:
 
@@ -1635,7 +1635,7 @@ test("admin users modal contains role status and reset actions", async () => {
 });
 ```
 
-- [ ] **Step 2: Run UI tests and verify they fail**
+- [x] **Step 2: Run UI tests and verify they fail**
 
 Run:
 
@@ -1645,7 +1645,7 @@ cd frontend && node --test tests/auth_ui_contract.test.mjs
 
 Expected: FAIL because Account is still placeholder and AdminUsersModal does not exist.
 
-- [ ] **Step 3: Add store state/actions**
+- [x] **Step 3: Add store state/actions**
 
 In `frontend/src/store/useAppStore.js`, add:
 
@@ -1680,7 +1680,7 @@ async updateAdminUser(id, payload) { ...adminApi.updateUser(id, payload); reload
 async resetAdminUserPassword(id, newPassword) { ...adminApi.resetPassword(id, { new_password: newPassword })... }
 ```
 
-- [ ] **Step 4: Replace Account placeholder**
+- [x] **Step 4: Replace Account placeholder**
 
 In `frontend/src/components/SettingsModal.jsx`, delete `ACCOUNT_PLACEHOLDER`. Make `AccountCategory()` read:
 
@@ -1708,7 +1708,7 @@ API token list and create form
 
 Keep styling consistent with existing settings groups and avoid nested cards.
 
-- [ ] **Step 5: Add TopBar user menu**
+- [x] **Step 5: Add TopBar user menu**
 
 Modify `frontend/src/components/TopBar.jsx`:
 
@@ -1730,7 +1730,7 @@ Logout button
 
 Use lucide icons: `UserRound`, `Users`, `LogOut`.
 
-- [ ] **Step 6: Create AdminUsersModal**
+- [x] **Step 6: Create AdminUsersModal**
 
 Create `frontend/src/components/AdminUsersModal.jsx` with:
 
@@ -1755,7 +1755,7 @@ Protect UI:
 if (!open) return null;
 ```
 
-- [ ] **Step 7: Mount AdminUsersModal**
+- [x] **Step 7: Mount AdminUsersModal**
 
 In `frontend/src/App.jsx`:
 
@@ -1765,7 +1765,7 @@ import AdminUsersModal from "./components/AdminUsersModal";
 <AdminUsersModal />
 ```
 
-- [ ] **Step 8: Run frontend UI tests and build**
+- [x] **Step 8: Run frontend UI tests and build**
 
 Run:
 
@@ -1776,7 +1776,7 @@ cd frontend && npm run build
 
 Expected: PASS and build succeeds.
 
-- [ ] **Step 9: Commit UI task**
+- [x] **Step 9: Commit UI task**
 
 ```bash
 git add frontend/src/components/SettingsModal.jsx frontend/src/components/TopBar.jsx frontend/src/components/AdminUsersModal.jsx frontend/src/store/useAppStore.js frontend/src/App.jsx frontend/tests/auth_ui_contract.test.mjs
@@ -1793,7 +1793,7 @@ git commit -m "feat: add account and admin user UI"
 - Modify: `README.md`
 - Possibly modify: `backend/tests/test_platform_readiness.py`
 
-- [ ] **Step 1: Update environment docs**
+- [x] **Step 1: Update environment docs**
 
 Add to `.env.example`:
 
@@ -1813,7 +1813,7 @@ If preserving dev default is preferred for current local workflows, keep `AUTH_M
 # AUTH_MODE=local-password
 ```
 
-- [ ] **Step 2: Update deployment guide**
+- [x] **Step 2: Update deployment guide**
 
 In `docs/deployment.md`, add a "Formal Local Login" section:
 
@@ -1834,7 +1834,7 @@ The first registered account becomes admin. Later accounts are normal users. Bro
 ```
 ```
 
-- [ ] **Step 3: Update README deployment hints**
+- [x] **Step 3: Update README deployment hints**
 
 In `README.md` team deployment notes, replace the current auth bullets with:
 
@@ -1845,7 +1845,7 @@ In `README.md` team deployment notes, replace the current auth bullets with:
 - 生产必须禁止裸露后端可信头入口，且不得使用 `AUTH_MODE=dev-header`。
 ```
 
-- [ ] **Step 4: Run backend verification**
+- [x] **Step 4: Run backend verification**
 
 Run:
 
@@ -1863,7 +1863,7 @@ PYTHONPATH=backend pytest backend/tests/test_postgres_m2_core_runtime.py backend
 
 Expected: PASS or PostgreSQL-dependent tests SKIP if `TEST_DATABASE_URL` is not configured.
 
-- [ ] **Step 5: Run frontend verification**
+- [x] **Step 5: Run frontend verification**
 
 Run:
 
@@ -1875,6 +1875,8 @@ cd frontend && npm run build
 Expected: tests PASS and build succeeds.
 
 - [ ] **Step 6: Manual smoke with dev server**
+
+Note: skipped in this run because ports `8000` and `5173` were already occupied by existing local services, `dev.sh` would stop the existing backend on `8000`, Vite proxy is fixed to `8000`, and the local PostgreSQL on `5432` does not contain the `literature_agent` role needed for isolated DB smoke. Automated backend/frontend verification above was run instead.
 
 Start services in a local auth mode that does not disturb production services:
 
@@ -1896,7 +1898,7 @@ Manual checks:
 9. Create an API token and call GET /api/auth/me with Authorization: Bearer <token>.
 ```
 
-- [ ] **Step 7: Commit docs and verification updates**
+- [x] **Step 7: Commit docs and verification updates**
 
 ```bash
 git add .env.example README.md docs/deployment.md backend/tests/test_platform_readiness.py

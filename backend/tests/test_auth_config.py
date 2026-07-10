@@ -27,6 +27,20 @@ def test_trusted_header_auth_is_allowed_in_production(monkeypatch):
     validate_auth_runtime()
 
 
+def test_local_password_and_hybrid_auth_modes_are_supported(monkeypatch):
+    from core.user_context import auth_mode, validate_auth_runtime
+
+    monkeypatch.setenv("APP_ENV", "production")
+
+    monkeypatch.setenv("AUTH_MODE", "local-password")
+    assert auth_mode() == "local-password"
+    validate_auth_runtime()
+
+    monkeypatch.setenv("AUTH_MODE", "hybrid")
+    assert auth_mode() == "hybrid"
+    validate_auth_runtime()
+
+
 def test_dev_subject_validation_keeps_filesystem_safe_boundary():
     from core.user_context import validate_subject
 

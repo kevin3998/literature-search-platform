@@ -30,9 +30,14 @@ Production requirements:
 
 ```bash
 APP_ENV=production
-AUTH_MODE=trusted-header
+AUTH_MODE=local-password
 DATABASE_URL=postgresql+psycopg://...
 DB_SCHEMA=literature_agent
+ENABLE_SIGNUP=true
+SESSION_TTL_DAYS=30
+PASSWORD_MIN_LENGTH=8
+COOKIE_NAME=lap_session
+CSRF_COOKIE_NAME=lap_csrf
 LITERATURE_USER_DATA_ROOT=/srv/literature-agent/users
 LITERATURE_SECRET_KEY_PATH=/srv/literature-agent/secret.key
 WORKER_REQUIRED=true
@@ -46,16 +51,33 @@ cd /srv/literature-agent
 PYTHONPATH=backend alembic -c backend/alembic.ini upgrade head
 ```
 
+## Formal Local Login
+
+For first-party browser login, use the local email/password auth mode:
+
+```bash
+APP_ENV=production
+AUTH_MODE=local-password
+ENABLE_SIGNUP=true
+SESSION_TTL_DAYS=30
+PASSWORD_MIN_LENGTH=8
+COOKIE_NAME=lap_session
+CSRF_COOKIE_NAME=lap_csrf
+LITERATURE_SECRET_KEY_PATH=/srv/literature-agent/secret.key
+```
+
+The first registered active account becomes `admin`. Later self-service signups become ordinary `user` accounts and can use agent features immediately unless an admin disables them. Browser login uses an opaque httpOnly database session cookie named `lap_session`; browser state-changing requests use the `lap_csrf` CSRF cookie/header pair. API tokens are created from Settings -> Account and can authenticate with `Authorization: Bearer <token>`.
+
 ## Trusted Header Auth
 
-`AUTH_MODE=trusted-header` is a temporary production bridge before a full login system. A trusted reverse proxy injects:
+`AUTH_MODE=trusted-header` is still available as a reverse-proxy / SSO bridge. A trusted reverse proxy injects:
 
 ```text
 X-Forwarded-User: alice
 X-Forwarded-User-Name: Alice Chen
 ```
 
-The backend must bind only to `127.0.0.1` or a private network behind the proxy. Do not expose the backend directly to browsers, because clients could forge trusted headers.
+The backend must bind only to `127.0.0.1` or a private network behind the proxy. Do not expose the backend directly to browsers, because clients could forge trusted headers. Do not use `AUTH_MODE=dev-header` in production.
 
 Optional header names:
 
@@ -157,7 +179,7 @@ Production readiness returns HTTP 503 if PostgreSQL is unavailable, migrations a
 ## Troubleshooting
 
 - `DATABASE_URL is required`: copy `.env.example` to `.env` or export a PostgreSQL SQLAlchemy URL.
-- `AUTH_MODE=dev-header is not allowed`: production must use `trusted-header`.
+- `AUTH_MODE=dev-header is not allowed`: production must use `local-password`, `trusted-header`, or `hybrid`.
 - `LITERATURE_SECRET_KEY_PATH is required`: create and persist a Fernet key file before production startup.
 - `no live worker heartbeat`: start the worker service or set `WORKER_REQUIRED=false` only in development.
 - Background jobs stay queued: worker is not running or is not listening to the required queue.

@@ -29,7 +29,7 @@ class UserStore:
             row = conn.execute(
                 text(
                     """
-                    select u.user_id, u.display_name, u.status, i.provider, i.subject
+                    select u.user_id, u.display_name, u.email, u.role, u.status, u.avatar_url, i.provider, i.subject
                     from user_identities i
                     join users u on u.user_id = i.user_id
                     where i.provider = :provider and i.subject = :subject
@@ -51,8 +51,8 @@ class UserStore:
             conn.execute(
                 text(
                     """
-                    insert into users(user_id, display_name, status, metadata_json, created_at, updated_at)
-                    values(:user_id, :display_name, 'active', '{}'::jsonb, :ts, :ts)
+                    insert into users(user_id, display_name, email, role, status, metadata_json, created_at, updated_at)
+                    values(:user_id, :display_name, null, 'user', 'active', '{}'::jsonb, :ts, :ts)
                     """
                 ),
                 {"user_id": user_id, "display_name": label, "ts": ts},
@@ -84,7 +84,10 @@ class UserStore:
             return {
                 "user_id": str(user_id),
                 "display_name": label,
+                "email": None,
+                "role": "user",
                 "status": "active",
+                "avatar_url": None,
                 "provider": provider,
                 "subject": subject,
             }
@@ -95,7 +98,7 @@ class UserStore:
     def get_user(self, user_id: str | uuid.UUID) -> dict[str, Any]:
         with self.engine.connect() as conn:
             row = conn.execute(
-                text("select user_id, display_name, status from users where user_id = :user_id"),
+                text("select user_id, display_name, email, role, status, avatar_url from users where user_id = :user_id"),
                 {"user_id": uuid_value(user_id)},
             ).mappings().first()
         if not row:
@@ -107,7 +110,10 @@ def _user_row(row) -> dict[str, Any]:
     return {
         "user_id": str(row["user_id"]),
         "display_name": row["display_name"],
+        "email": row.get("email") if hasattr(row, "get") else row["email"],
+        "role": row.get("role", "user") if hasattr(row, "get") else row["role"],
         "status": row.get("status", "active") if hasattr(row, "get") else row["status"],
+        "avatar_url": row.get("avatar_url") if hasattr(row, "get") else row["avatar_url"],
         "provider": row.get("provider") if hasattr(row, "get") else None,
         "subject": row.get("subject") if hasattr(row, "get") else None,
     }

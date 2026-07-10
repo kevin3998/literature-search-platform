@@ -8,11 +8,14 @@ import SettingsModal from "./components/SettingsModal";
 import HomeDashboard from "./components/HomeDashboard";
 import WorkflowView from "./components/WorkflowView";
 import StructuredExtractionWorkbench from "./components/StructuredExtractionWorkbench";
+import AuthScreen from "./components/AuthScreen";
+import AdminUsersModal from "./components/AdminUsersModal";
 import { useAppStore } from "./store/useAppStore";
 import { AlertTriangle, X } from "lucide-react";
 
 export default function App() {
-  const loadModules = useAppStore((s) => s.loadModules);
+  const bootstrapAuth = useAppStore((s) => s.bootstrapAuth);
+  const authStatus = useAppStore((s) => s.auth.status);
   const modulesLoaded = useAppStore((s) => s.modulesLoaded);
   const activeModuleId = useAppStore((s) => s.activeModuleId);
   const homeOpen = useAppStore((s) => s.homeOpen);
@@ -22,8 +25,20 @@ export default function App() {
   const clearAppError = useAppStore((s) => s.clearAppError);
 
   useEffect(() => {
-    loadModules();
-  }, [loadModules]);
+    bootstrapAuth();
+  }, [bootstrapAuth]);
+
+  if (authStatus === "checking") {
+    return (
+      <div className="h-screen flex items-center justify-center bg-paper-50 text-ink-500 text-[13px] font-mono">
+        正在检查登录状态…
+      </div>
+    );
+  }
+
+  if (authStatus === "login_required") {
+    return <AuthScreen />;
+  }
 
   if ((!modulesLoaded || !activeModuleId) && !appError) {
     return (
@@ -61,6 +76,7 @@ export default function App() {
       {/* Settings opens as a centered modal over the current workbench so closing
           it returns the user to the exact prior session/workbench state. */}
       <SettingsModal />
+      <AdminUsersModal />
     </div>
   );
 }
