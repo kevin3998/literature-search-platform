@@ -70,14 +70,17 @@ trap cleanup EXIT INT TERM
 backend_contract_ok() {
   local base_url="http://${HOST}:${BACKEND_PORT}"
   local probe_body
+  local probe_status
   local readiness_body
   readiness_body="$(curl -fsS "${base_url}/api/readiness" 2>/dev/null)" || return 1
   if [[ "$START_WORKER" != "0" && "$START_WORKER" != "false" ]]; then
     [[ "$readiness_body" == *'"workers.heartbeat"'* || "$readiness_body" == *'Worker heartbeat'* ]] || return 1
     [[ "$readiness_body" == *'"overall":"error"'* ]] && return 1
   fi
-  probe_body="$(curl -sS "${base_url}${BACKEND_CONTRACT_PROBE}" 2>/dev/null || true)"
-  [[ "$probe_body" == *"structured extraction task not found"* ]]
+  probe_body="$(curl -sS -w $'\n%{http_code}' "${base_url}${BACKEND_CONTRACT_PROBE}" 2>/dev/null || true)"
+  probe_status="${probe_body##*$'\n'}"
+  probe_body="${probe_body%$'\n'*}"
+  [[ "$probe_body" == *"structured extraction task not found"* || "$probe_status" == "401" ]]
 }
 
 run_migrations() {

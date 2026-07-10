@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -228,7 +231,7 @@ def test_auth_csrf_reissues_missing_cookie_for_valid_session(monkeypatch):
 
         def reissue_csrf(self, session_token: str):
             if session_token == "session":
-                return {"csrf_token": "csrf_reissued", "expires_at": None}
+                return {"csrf_token": "csrf_reissued", "expires_at": datetime(2026, 8, 9, 17, 30, tzinfo=ZoneInfo("Asia/Shanghai"))}
             return None
 
     monkeypatch.setenv("AUTH_MODE", "local-password")
@@ -246,6 +249,7 @@ def test_auth_csrf_reissues_missing_cookie_for_valid_session(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"csrf_token": "csrf_reissued"}
     assert response.cookies[csrf_cookie_name()] == "csrf_reissued"
+    assert "GMT" in response.headers["set-cookie"]
 
 
 def test_auth_api_signup_me_and_logout(monkeypatch):

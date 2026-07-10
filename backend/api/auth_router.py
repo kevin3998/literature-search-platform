@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -87,8 +87,7 @@ def csrf(request: Request, response: Response, user: UserContext = Depends(curre
 
 def _set_auth_cookies(response: Response, login_result: dict) -> None:
     max_age = session_ttl_days() * 24 * 60 * 60
-    expires_at = login_result.get("expires_at")
-    expires = expires_at if isinstance(expires_at, datetime) else None
+    expires = _cookie_expires(login_result.get("expires_at"))
     response.set_cookie(
         session_cookie_name(),
         login_result["session_token"],
@@ -113,8 +112,7 @@ def _set_auth_cookies(response: Response, login_result: dict) -> None:
 
 def _set_csrf_cookie(response: Response, csrf_result: dict) -> None:
     max_age = session_ttl_days() * 24 * 60 * 60
-    expires_at = csrf_result.get("expires_at")
-    expires = expires_at if isinstance(expires_at, datetime) else None
+    expires = _cookie_expires(csrf_result.get("expires_at"))
     response.set_cookie(
         csrf_cookie_name(),
         csrf_result["csrf_token"],
@@ -130,6 +128,14 @@ def _set_csrf_cookie(response: Response, csrf_result: dict) -> None:
 def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(session_cookie_name(), path="/", secure=cookie_secure(), httponly=True, samesite="lax")
     response.delete_cookie(csrf_cookie_name(), path="/", secure=cookie_secure(), httponly=False, samesite="lax")
+
+
+def _cookie_expires(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _context_dict(user: UserContext) -> dict:
