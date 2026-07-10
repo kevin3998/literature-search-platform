@@ -52,6 +52,18 @@ const CURATION_ACTIONS = [
   ["needs_review", "待复核"],
 ];
 
+function citationAlias(item) {
+  return item?.alias || item?.citation_alias || item?.citationAlias || null;
+}
+
+function evidenceCardLocatorLabel(item) {
+  const alias = citationAlias(item);
+  if (alias) {
+    return [citationOrdinalLabel(alias), item.source_path].filter(Boolean).join(" · ");
+  }
+  return evidenceIdLabel(item.evidence_ids?.join(", ") || item.evidence_id || item.evidenceItemId || item.source_path);
+}
+
 export default function ResultsPanel() {
   const rightPanelTab = useAppStore((s) => s.rightPanelTab);
   const setRightPanelTab = useAppStore((s) => s.setRightPanelTab);
@@ -187,7 +199,7 @@ function EvidenceTab({ items, filter, summary, selectedId, onSelect, onFilter, o
                 </p>
               )}
               <div className="mt-2 font-mono text-[10.5px] text-ink-400 truncate">
-                {evidenceIdLabel(item.evidence_ids?.join(", ") || item.evidence_id || item.evidenceItemId || item.source_path)}
+                {evidenceCardLocatorLabel(item)}
               </div>
               {item.note && <div className="mt-1 text-[11px] text-ink-500 line-clamp-2">备注：{item.note}</div>}
               <CurationButtons

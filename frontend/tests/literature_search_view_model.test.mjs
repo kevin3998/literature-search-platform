@@ -11,6 +11,7 @@ import {
   buildSessionEvidenceItems,
   buildSuggestedActions,
   findAudit,
+  findEvidence,
   findPaper,
   findSessionEvidence,
   latestAssistantMetadata,
@@ -145,6 +146,36 @@ test("buildSessionEvidenceItems merges current citation evidence with session ev
   assert.equal(accepted[0].note, "关键证据");
   assert.equal(findSessionEvidence(session, "evitem_2").evidence_id, "E2");
   assert.equal(buildEvidenceSummary(session).accepted, 1);
+});
+
+test("citation-only evidence remains selectable by numeric alias", () => {
+  const session = {
+    messages: [
+      {
+        role: "assistant",
+        content: "answer [11]",
+        citation: {
+          used_evidence: [
+            {
+              alias: "11",
+              citation_alias: "11",
+              title: "Alias paper",
+              snippet: "citation snapshot",
+              source_path: "articles/example/fulltext.md",
+            },
+          ],
+        },
+      },
+    ],
+    researchState: { evidence_pool: { recent: [] } },
+  };
+
+  const items = buildSessionEvidenceItems(session);
+  const found = findEvidence(session, "11");
+
+  assert.equal(items[0].id, "11");
+  assert.equal(items[0].alias, "11");
+  assert.equal(found.title, "Alias paper");
 });
 
 test("buildPaperItems and buildPaperSummary use research state candidate papers", () => {

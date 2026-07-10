@@ -439,10 +439,28 @@ function MissingDetail({ text }) {
   return <div className="text-[13px] leading-relaxed text-ink-500">{text}</div>;
 }
 
+function citationAlias(evidence) {
+  return evidence?.alias || evidence?.citation_alias || evidence?.citationAlias || (/^\d+$/.test(String(evidence?.evidence_id || "")) ? evidence.evidence_id : null);
+}
+
+function internalEvidenceIds(evidence, alias) {
+  const ids = [
+    ...(evidence?.evidence_ids || []),
+    evidence?.source_evidence_id,
+    evidence?.sourceEvidenceId,
+    evidence?.evidence_id,
+  ]
+    .filter(Boolean)
+    .map((id) => String(id))
+    .filter((id) => id !== String(alias || ""));
+  return [...new Set(ids)];
+}
+
 function EvidenceDetail({ evidence }) {
   const setEvidenceStatus = useAppStore((s) => s.setEvidenceStatus);
   if (!evidence) return <MissingDetail text="未找到这条证据。可能是会话已经刷新，或该证据不属于最近一轮回答。" />;
-  const ids = evidence.evidence_ids || (evidence.evidence_id ? [evidence.evidence_id] : []);
+  const alias = citationAlias(evidence);
+  const ids = internalEvidenceIds(evidence, alias);
   const evidenceItemId = evidence.evidenceItemId || evidence.evidence_item_id;
   const status = evidence.status || "candidate";
   return (
@@ -462,7 +480,8 @@ function EvidenceDetail({ evidence }) {
       )}
       <DetailGrid
         rows={[
-          ["证据 ID", ids.join(", ") || "未提供"],
+          ["引用编号", alias ? citationOrdinalLabel(alias) : "未提供"],
+          ["内部证据 ID", ids.join(", ") || "未提供"],
           ["章节", evidence.section || "未提供"],
           ["会话证据 ID", evidenceItemId || "未提供"],
           ["来源路径", evidence.source_path || "未提供"],

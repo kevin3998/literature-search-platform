@@ -168,6 +168,14 @@ test("citation labels distinguish UI ordinals from real evidence ids", () => {
   assert.equal(citationAriaLabel(2), "文献证据 2");
 });
 
+test("literature evidence details include numeric citation aliases", async () => {
+  const source = await readFile(componentPath("ChatPanel.jsx"), "utf8");
+  const resultsSource = await readFile(componentPath("ResultsPanel.jsx"), "utf8");
+
+  assert.match(source, /citation_alias|alias/);
+  assert.match(resultsSource, /citation_alias|alias/);
+});
+
 test("markdown citation renderer uses numeric citation markers", async () => {
   const source = await readFile(componentPath("MarkdownMessage.jsx"), "utf8");
 

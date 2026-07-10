@@ -44,16 +44,19 @@ function clampSnippet(text, n = 170) {
 }
 
 // Inline citation as a small numbered badge that reveals the source on hover/focus.
-function CitationChip({ id, n, ev, unverified }) {
+function CitationChip({ id, n, ev, unverified, onCitationClick }) {
   const label = unverified ? "未核验" : citationOrdinalLabel(n);
+  const clickable = !!ev && !!onCitationClick;
   return (
     <span className="group relative inline-block align-super leading-none">
       <button
         type="button"
+        onClick={clickable ? () => onCitationClick(id, ev) : undefined}
         aria-label={unverified ? `未核验引用，文献证据 ${id}` : citationAriaLabel(n)}
         title={unverified ? "未找到对应证据（可能是模型虚构的引用）" : undefined}
         className={clsx(
           "inline-flex items-center justify-center min-w-[30px] h-[16px] px-1.5 ml-0.5 rounded-[7px] text-[9.5px] font-medium transition-colors cursor-default",
+          clickable && "cursor-pointer",
           unverified
             ? "bg-red-50 text-red-600 border border-red-200"
             : "bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -80,7 +83,7 @@ function CitationChip({ id, n, ev, unverified }) {
 }
 
 function renderInline(text, keyBase = "", ctx = {}) {
-  const { missing, numbers, evidenceById } = ctx;
+  const { missing, numbers, evidenceById, onCitationClick } = ctx;
   const nodes = [];
   let last = 0;
   let m;
@@ -97,6 +100,7 @@ function renderInline(text, keyBase = "", ctx = {}) {
           n={numbers ? numbers.get(id) : undefined}
           ev={evidenceById ? evidenceById.get(id) : undefined}
           unverified={!!(missing && missing.has(id))}
+          onCitationClick={onCitationClick}
         />
       );
     } else if (m[2]) {
@@ -124,9 +128,9 @@ const isUl = (line) => /^\s*[-*+]\s+/.test(line);
 const isOl = (line) => /^\s*\d+\.\s+/.test(line);
 const isQuote = (line) => /^\s*>\s?/.test(line);
 
-export default function MarkdownMessage({ text, missingIds, numbers, evidenceById }) {
+export default function MarkdownMessage({ text, missingIds, numbers, evidenceById, onCitationClick }) {
   const missing = missingIds && missingIds.length ? new Set(missingIds) : null;
-  const ctx = { missing, numbers: numbers || buildCitationNumbers(text), evidenceById: evidenceById || null };
+  const ctx = { missing, numbers: numbers || buildCitationNumbers(text), evidenceById: evidenceById || null, onCitationClick };
   const inline = (t, k) => renderInline(t, k, ctx);
   const lines = (text || "").split("\n");
   const blocks = [];

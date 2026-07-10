@@ -233,6 +233,7 @@ def item_to_available_evidence(item: dict[str, Any]) -> dict[str, Any]:
         "evidence_id": str(item.get("alias") or ""),
         "alias": str(item.get("alias") or ""),
         "evidence_uid": item.get("evidence_uid"),
+        "source_evidence_id": locator.get("evidence_id"),
         "paper_id": paper.get("paper_id"),
         "doi": paper.get("doi"),
         "title": paper.get("title"),

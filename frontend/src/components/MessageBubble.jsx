@@ -5,6 +5,7 @@ import RetrievalProgress from "./RetrievalProgress";
 import RetrievalInspector from "./RetrievalInspector";
 import MarkdownMessage, { buildCitationNumbers, buildEvidenceById } from "./MarkdownMessage";
 import { citationOrdinalLabel } from "./citationLabels.js";
+import { useAppStore } from "../store/useAppStore";
 
 // Block 6c: specialist-role → badge label for "which subagent answered".
 const ROLE_LABEL = {
@@ -332,6 +333,7 @@ function CitationFooter({ citation, numbers }) {
 export default function MessageBubble({ message, progress, streaming, groundingChecking, isLastUser, onEdit, onStartDeep }) {
   const isUser = message.role === "user";
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const selectEvidence = useAppStore((s) => s.selectLiteratureEvidence);
 
   if (isUser) {
     return (
@@ -437,6 +439,7 @@ export default function MessageBubble({ message, progress, streaming, groundingC
                 missingIds={message.citation?.missing_ids}
                 numbers={citationNumbers}
                 evidenceById={evidenceById}
+                onCitationClick={(id) => selectEvidence(id)}
               />
               {streaming && <span className="inline-block w-[2px] h-[1em] bg-amber align-middle ml-0.5 animate-pulse" />}
             </div>

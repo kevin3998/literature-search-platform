@@ -1049,6 +1049,7 @@ def _attach_citation_rows(message: dict, citations: list[dict]) -> None:
                 "year": paper.get("year"),
                 "journal": paper.get("journal"),
                 "paper_id": paper.get("paper_id"),
+                "source_evidence_id": locator.get("evidence_id"),
                 "section": locator.get("section") or locator.get("section_id"),
                 "section_id": locator.get("section_id"),
                 "chunk_index": locator.get("chunk_index"),
